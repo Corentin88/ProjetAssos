@@ -1,3 +1,4 @@
+import { useLayoutEffect } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { ArrowLeft, CalendarDays, Eye, PencilLine, Tag, User } from 'lucide-react'
 import { useDb } from '../../lib/db'
@@ -27,6 +28,10 @@ export function ArticleDetail() {
   const location = useLocation()
   const article = db.articles.find((a) => a.slug === slug && (a.statut === 'publie' || a.publicSnapshot))
 
+  useLayoutEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' })
+  }, [slug])
+
   /** URL de la liste d'origine (critères, tri, pagination) transmise par les
    *  cartes d'articles : « Retour à la liste » ne perd aucun critère (§25) */
   const retourListe = (location.state?.from as string | undefined) ?? '/actualites'
@@ -39,7 +44,7 @@ export function ArticleDetail() {
           description="Cet article n'existe pas ou n'est plus publié. Il a peut-être été retiré du site ou placé dans la corbeille."
         />
         <p className="mt-6 text-center">
-          <Link to="/actualites" className="inline-flex min-h-[48px] items-center rounded-xl bg-forest px-6 font-bold text-white hover:bg-forest-dark">
+          <Link to={retourListe} className="inline-flex min-h-[48px] items-center rounded-xl bg-forest px-6 font-bold text-white hover:bg-forest-dark">
             <ArrowLeft aria-hidden="true" className="mr-2 h-5 w-5" />
             Retour aux actualités
           </Link>
@@ -147,7 +152,7 @@ export function ArticleDetail() {
               const c = getCategory(cid)
               return c ? (
                 <li key={cid}>
-                  <CategoryChip to={`/actualites?cat=${c.id}`}>{c.nom}</CategoryChip>
+                  <CategoryChip to={`/actualites?cat=${encodeURIComponent(c.id)}`}>{c.nom}</CategoryChip>
                 </li>
               ) : null
             })}
@@ -155,7 +160,7 @@ export function ArticleDetail() {
               const t = getTag(tid)
               return t ? (
                 <li key={tid}>
-                  <TagChip to={`/actualites?tag=${t.id}`}>#{t.nom}</TagChip>
+                  <TagChip to={`/actualites?tag=${encodeURIComponent(t.id)}`}>#{t.nom}</TagChip>
                 </li>
               ) : null
             })}

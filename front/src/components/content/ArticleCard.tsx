@@ -1,9 +1,10 @@
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useMatch } from 'react-router-dom'
 import { CalendarDays, Newspaper, User } from 'lucide-react'
 import type { Article, Tag as TagType } from '../../types'
 import { articleAuthorLabel, articleCoverMediaId, getCategory, getMedia, getTag, publicBlocks } from '../../lib/selectors'
 import { formatDate } from '../../lib/format'
 import { mediaUrl } from '../../lib/assets'
+import { normaliserParametresArticles } from '../../lib/articleSearchParams'
 import { Badge } from '../ui/feedback'
 import type { BadgeVariant } from '../ui/feedback'
 
@@ -32,8 +33,8 @@ function extrait(article: Article): string {
 
 /** Carte d'article moderne et compacte (§25) :
  *  - image de couverture en haut, badge de catégorie superposé en haut à gauche ;
- *  - tags superposés en bas de l'image (3 maximum puis « +N ») sur un voile
- *    sombre garantissant le contraste, même sur une photographie claire ;
+ *  - tags superposés en bas de l'image (3 maximum puis « +N ») sur une seule
+ *    ligne, avec un fond opaque pour rester lisibles sur chaque photographie ;
  *  - titre, date, auteur et extrait sous l'image — catégories et tags ne sont
  *    pas répétés sous l'image ;
  *  - les badges sont cliquables et appliquent le filtre correspondant ;
@@ -53,13 +54,22 @@ export function ArticleCard({ article }: { article: Article }) {
    *  tri, pagination) dans l'état de navigation : le lien « Retour à la
    *  liste » de l'article la réutilisera (§25). */
   const location = useLocation()
-  const depuisListe = location.pathname === '/actualites'
+  const depuisListe = Boolean(useMatch('/actualites'))
   const retourListe = depuisListe ? `${location.pathname}${location.search}` : undefined
 
+  const lienFiltre = (critere: 'cat' | 'tag', id: string) => {
+    // Depuis les résultats, le badge remplace seulement son critère et repart à la première page.
+    const params = normaliserParametresArticles(new URLSearchParams(depuisListe ? location.search : ''))
+    params.set(critere, id)
+    params.delete('page')
+    params.set('avancee', '1')
+    return `/actualites?${params}`
+  }
+
   return (
-    <article className="carte carte-hover group flex h-full flex-col overflow-hidden">
+    <article className="carte carte-hover group flex h-full min-w-0 flex-col overflow-hidden">
       {/* Zone visuelle standardisée : image + badges superposés (§22, §25) */}
-      <div className="relative h-48 w-full shrink-0 overflow-hidden bg-forest-dark">
+      <div className="relative aspect-video w-full shrink-0 overflow-hidden bg-forest-dark">
         <Link
           to={lienArticle}
           state={retourListe ? { from: retourListe } : undefined}
@@ -71,7 +81,7 @@ export function ArticleCard({ article }: { article: Article }) {
             <img
               src={mediaUrl(cover.file)}
               alt=""
-              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
+              className="h-full w-full object-cover motion-safe:transition-transform motion-safe:duration-300 motion-safe:group-hover:scale-[1.04]"
               loading="lazy"
             />
           ) : (
@@ -81,19 +91,12 @@ export function ArticleCard({ article }: { article: Article }) {
           )}
         </Link>
 
-        {/* Voile de lisibilité en bas de l'image pour les tags */}
-        {tags.length > 0 ? (
-          <span
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-bark/75 via-bark/35 to-transparent"
-            aria-hidden="true"
-          />
-        ) : null}
-
         {/* Badge de catégorie, haut à gauche, toujours lisible */}
         {categorie ? (
           <Link
-            to={`/actualites?cat=${categorie.id}`}
-            className="absolute left-3 top-3 z-10 inline-flex max-w-[calc(100%-1.5rem)] items-center rounded-full bg-white/95 px-3 py-1 text-[0.8125rem] font-bold text-forest shadow-sm hover:bg-white"
+            to={lienFiltre('cat', categorie.id)}
+            className="absolute left-3 top-3 z-10 inline-flex min-h-8 max-w-[calc(100%-1.5rem)] items-center rounded-full bg-white px-3 text-sm font-bold text-forest shadow-sm hover:bg-leaf-pale hover:underline"
+            title={categorie.nom}
           >
             <span className="truncate">{categorie.nom}</span>
             <span className="sr-only"> — filtrer les actualités par cette catégorie</span>
@@ -103,27 +106,31 @@ export function ArticleCard({ article }: { article: Article }) {
         {/* Tags superposés en bas de l'image, cliquables */}
         {tags.length > 0 ? (
           <ul
-            className="absolute inset-x-3 bottom-2.5 z-10 flex flex-wrap gap-1.5"
+            className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex items-center gap-1.5"
             aria-label="Tags de l'article"
           >
             {tagsVisibles.map((t) => (
-              <li key={t.id}>
+              <li key={t.id} className="min-w-0">
                 <Link
-                  to={`/actualites?tag=${t.id}`}
-                  className="inline-flex items-center rounded-full bg-bark/65 px-2.5 py-0.5 text-[0.75rem] font-bold text-white backdrop-blur-sm hover:bg-bark/85"
+                  to={lienFiltre('tag', t.id)}
+                  className="pointer-events-auto flex min-h-8 items-center rounded-full bg-bark px-2.5 text-xs font-bold text-white hover:bg-forest-dark hover:underline"
+                  title={`#${t.nom}`}
                 >
-                  #{t.nom}
+                  <span className="truncate">#{t.nom}</span>
                   <span className="sr-only"> — filtrer par ce tag</span>
                 </Link>
               </li>
             ))}
             {tagsRestants > 0 ? (
-              <li>
+              <li className="pointer-events-auto shrink-0">
                 <span
-                  className="inline-flex items-center rounded-full bg-bark/65 px-2.5 py-0.5 text-[0.75rem] font-bold text-white/90 backdrop-blur-sm"
+                  className="inline-flex min-h-8 items-center rounded-full bg-bark px-2.5 text-xs font-bold text-white"
                   title={tags.slice(MAX_TAGS_CARTE).map((t) => `#${t.nom}`).join(', ')}
                 >
-                  +{tagsRestants}
+                  <span aria-hidden="true">+{tagsRestants}</span>
+                  <span className="sr-only">
+                    {tagsRestants} {tagsRestants === 1 ? 'tag supplémentaire' : 'tags supplémentaires'}
+                  </span>
                 </span>
               </li>
             ) : null}
@@ -131,7 +138,7 @@ export function ArticleCard({ article }: { article: Article }) {
         ) : null}
       </div>
 
-      <div className="flex flex-1 flex-col gap-2 p-5">
+      <div className="flex flex-1 flex-col gap-2 p-4 [overflow-wrap:anywhere] sm:p-5">
         <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.8125rem] text-mist">
           <span className="inline-flex items-center gap-1.5">
             <CalendarDays aria-hidden="true" className="h-4 w-4" />
@@ -153,10 +160,10 @@ export function ArticleCard({ article }: { article: Article }) {
             {article.titre}
           </Link>
         </h3>
-        <p className="flex-1 text-[0.9375rem] leading-relaxed text-bark/90 line-clamp-3">
+        <p className="line-clamp-3 text-[0.9375rem] leading-relaxed text-bark/90">
           {extrait(article)}
         </p>
-        <p className="mt-1">
+        <p className="mt-auto pt-1">
           <Link
             to={lienArticle}
             state={retourListe ? { from: retourListe } : undefined}

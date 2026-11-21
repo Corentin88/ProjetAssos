@@ -74,7 +74,7 @@ export function SiteFooter() {
             <li><Link className="underline underline-offset-4 hover:text-white" to="/accessibilite">Accessibilité : conformité RGAA</Link></li>
           </ul>
           <h3 className="mt-6 text-base font-bold">Suivez-nous</h3>
-          <ul className="mt-2 flex gap-3">
+          <ul className="mt-2 flex flex-wrap gap-3">
             {c.facebook ? (
               <li>
                 <a

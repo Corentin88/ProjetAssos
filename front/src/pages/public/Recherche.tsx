@@ -1,4 +1,5 @@
 import { Navigate, useSearchParams } from 'react-router-dom'
+import { normaliserParametresArticles } from '../../lib/articleSearchParams'
 
 /** La page de recherche dédiée a été supprimée (brief V3 §2) : la recherche
  *  progressive est désormais intégrée à la page des actualités. L'ancienne
@@ -8,15 +9,13 @@ import { Navigate, useSearchParams } from 'react-router-dom'
 export function RedirectionRecherche() {
   const [params] = useSearchParams()
 
+  const normalises = normaliserParametresArticles(params)
   const suivants = new URLSearchParams()
-  for (const cle of ['q', 'annee', 'tag', 'tri', 'ordre', 'page']) {
-    const v = params.get(cle)
+  for (const cle of ['q', 'annee', 'cat', 'tag', 'tri', 'ordre', 'page']) {
+    const v = normalises.get(cle)
     if (v) suivants.set(cle, v)
   }
-  const categorie = params.get('cat') ?? params.get('categorie')
-  if (categorie) suivants.set('cat', categorie)
-  if (!suivants.get('tri')) suivants.set('avancee', '1')
+  suivants.set('avancee', '1')
 
-  const query = suivants.toString()
-  return <Navigate to={`/actualites${query ? `?${query}` : ''}`} replace />
+  return <Navigate to={`/actualites?${suivants}`} replace />
 }

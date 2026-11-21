@@ -24,5 +24,36 @@ services:
       retries: 5
       start_period: 10s
 
+  front:
+    build:
+      context: ./front
+      dockerfile: Dockerfile.dev
+    init: true
+    environment:
+      # Docker Desktop ne relaie pas toujours les événements sur les fichiers Windows.
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "127.0.0.1:5173:5173"
+    volumes:
+      - ./front/src:/app/src:ro
+      - ./front/public:/app/public:ro
+      - ./front/index.html:/app/index.html:ro
+
+  back:
+    build:
+      context: ./back
+      dockerfile: Dockerfile.dev
+    init: true
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL_HOTE: ${DATABASE_URL:?Renseignez DATABASE_URL dans le fichier .env}
+      NODE_OPTIONS: "--import=/app/docker/database-url.mjs"
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./back/src:/app/src:ro
+
 volumes:
   postgres_data:

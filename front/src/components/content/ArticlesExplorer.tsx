@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ChevronDown, RotateCcw, Search, SearchX, SlidersHorizontal, X } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
 import { useDb, useDbVersion } from '../../lib/db'
 import { getCategory, getTag, publishedYears, searchArticles } from '../../lib/selectors'
+import { normaliserParametresArticles } from '../../lib/articleSearchParams'
 import { Button, Field, Input, Select } from '../ui/form'
 import { EmptyState } from '../ui/feedback'
 import { Pagination } from '../ui/nav'
@@ -24,42 +24,41 @@ export function ArticlesExplorer({ titreResultats }: { titreResultats?: string }
 
   const q = params.get('q') ?? ''
   const annee = params.get('annee') ?? ''
-  // Compatibilité : les anciens liens utilisaient « categorie » — le paramètre
-  // canonique est désormais « cat » (les deux sont acceptés à la lecture)
   const cat = params.get('cat') ?? params.get('categorie') ?? ''
   const tag = params.get('tag') ?? ''
-  const tri = (params.get('tri') ?? 'date') as 'date' | 'titre' | 'auteur'
-  const ordre = (params.get('ordre') ?? 'decroissant') as 'croissant' | 'decroissant'
-  const page = Math.max(1, Number(params.get('page') ?? '1') || 1)
+  const triParam = params.get('tri')
+  const tri = triParam === 'titre' || triParam === 'auteur' ? triParam : 'date'
+  const ordre = params.get('ordre') === 'croissant' ? 'croissant' : 'decroissant'
+  const pageParam = Number(params.get('page'))
+  const page = Number.isSafeInteger(pageParam) && pageParam > 0 ? pageParam : 1
+  const nbFiltres = [annee, cat, tag, tri !== 'date', ordre !== 'decroissant'].filter(Boolean).length
+  const rechercheActive = Boolean(q) || nbFiltres > 0
 
   /** Panneau de filtres : ouvert par défaut si des filtres avancés sont déjà
    *  actifs (lien « recherche avancée », badge de catégorie ou de tag cliqué),
    *  sinon fermé — la recherche simple est immédiatement visible. */
   const [panneauOuvert, setPanneauOuvert] = useState(
-    () => Boolean(params.get('avancee')) || Boolean(annee || cat || tag),
+    () => params.has('avancee') || nbFiltres > 0,
   )
 
-  // Le paramètre « avancee » est un signal à usage unique (lien « Recherche
-  // avancée », ancienne route /recherche) : ouvrir le panneau même si la page
-  // est déjà montée, puis retirer le paramètre de l'URL
+  // « avancee » ouvre le panneau même si la liste est déjà montée, par exemple après un clic sur un badge.
+  // Le signal et l'ancien nom du paramètre sont retirés sans ajouter d'entrée dans l'historique.
   useEffect(() => {
-    if (params.get('avancee')) {
-      setPanneauOuvert(true)
-      const next = new URLSearchParams(params)
-      next.delete('avancee')
-      setParams(next, { replace: true })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params])
+    if (!params.has('avancee') && !params.has('categorie')) return
+    if (params.has('avancee')) setPanneauOuvert(true)
+    const next = normaliserParametresArticles(params)
+    next.delete('avancee')
+    setParams(next, { replace: true })
+  }, [params, setParams])
 
-  const maj = (patch: Record<string, string | undefined>) => {
-    const next = new URLSearchParams(params)
+  const maj = (patch: Record<string, string | undefined>, replace = false) => {
+    const next = normaliserParametresArticles(params)
     Object.entries(patch).forEach(([k, v]) => {
       if (v === undefined || v === '') next.delete(k)
       else next.set(k, v)
     })
     if (!('page' in patch)) next.delete('page')
-    setParams(next, { replace: false })
+    if (next.toString() !== params.toString()) setParams(next, { replace })
   }
 
   const resultats = useMemo(
@@ -81,11 +80,6 @@ export function ArticlesExplorer({ titreResultats }: { titreResultats?: string }
 
   const annees = publishedYears()
 
-  /** Nombre de critères avancés actifs (affiché sur le bouton « Filtres ») */
-  const nbFiltres = (annee ? 1 : 0) + (cat ? 1 : 0) + (tag ? 1 : 0)
-  const triPersonnalise = tri !== 'date' || ordre !== 'decroissant'
-  const rechercheActive = Boolean(q.trim()) || nbFiltres > 0 || triPersonnalise
-
   const reinitialiser = () => {
     // Les critères sont effacés mais le panneau garde son état : on ne perd
     // pas le contexte de recherche en cours
@@ -93,18 +87,18 @@ export function ArticlesExplorer({ titreResultats }: { titreResultats?: string }
   }
 
   /** Puces des critères actifs, retirables individuellement */
-  const puces: { label: string; icone?: LucideIcon; onRetirer: () => void }[] = []
+  const puces: { label: string; onRetirer: () => void }[] = []
   if (q.trim()) {
     puces.push({ label: `« ${q.trim()} »`, onRetirer: () => maj({ q: undefined }) })
   }
   if (annee) puces.push({ label: `Année : ${annee}`, onRetirer: () => maj({ annee: undefined }) })
   if (cat) {
-    const c = getCategory(cat)
-    if (c) puces.push({ label: `Catégorie : ${c.nom}`, onRetirer: () => maj({ cat: undefined }) })
+    const nom = getCategory(cat)?.nom ?? 'introuvable'
+    puces.push({ label: `Catégorie : ${nom}`, onRetirer: () => maj({ cat: undefined }) })
   }
   if (tag) {
     const t = getTag(tag)
-    if (t) puces.push({ label: `Tag : #${t.nom}`, onRetirer: () => maj({ tag: undefined }) })
+    puces.push({ label: `Tag : ${t ? `#${t.nom}` : 'introuvable'}`, onRetirer: () => maj({ tag: undefined }) })
   }
   if (tri !== 'date') {
     puces.push({ label: `Tri : ${tri === 'titre' ? 'titre' : 'auteur'}`, onRetirer: () => maj({ tri: undefined }) })
@@ -132,10 +126,10 @@ export function ArticlesExplorer({ titreResultats }: { titreResultats?: string }
               id="recherche-q"
               type="search"
               value={q}
-              placeholder="Rechercher : fête du village, chorale, auteur, thème…"
+              placeholder="Rechercher un article"
               aria-label="Rechercher dans les articles (titre, contenu, auteur, catégories et tags)"
               className="min-h-[52px] pl-12"
-              onChange={(e) => maj({ q: e.target.value })}
+              onChange={(e) => maj({ q: e.target.value }, true)}
             />
           </div>
           <button
@@ -168,77 +162,75 @@ export function ArticlesExplorer({ titreResultats }: { titreResultats?: string }
           </button>
         </div>
 
-        {/* Panneau de filtres : se déploie sous la barre, sur la même page ;
-            le refermer ne perd pas les critères (portés par l'URL) */}
-        {panneauOuvert ? (
-          <div
-            id="panneau-filtres"
-            className="mt-4 grid gap-x-5 gap-y-4 rounded-xl border border-line bg-sand p-4 sm:p-5 md:grid-cols-2 lg:grid-cols-3"
+        {/* Panneau de filtres : le refermer conserve les critères portés par l'URL. */}
+        <div
+          id="panneau-filtres"
+          hidden={!panneauOuvert}
+          className={`mt-4 gap-x-5 gap-y-4 rounded-xl border border-line bg-sand p-4 sm:p-5 md:grid-cols-2 lg:grid-cols-3 ${panneauOuvert ? 'grid' : 'hidden'}`}
+        >
+          <Field
+            label="Catégorie"
+            htmlFor="recherche-cat"
           >
-            <Field
-              label="Catégorie"
-              htmlFor="recherche-cat"
+            <Select id="recherche-cat" value={cat} onChange={(e) => maj({ cat: e.target.value })}>
+              <option value="">Toutes les catégories</option>
+              {db.categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.nom}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Tag" htmlFor="recherche-tag">
+            <Select id="recherche-tag" value={tag} onChange={(e) => maj({ tag: e.target.value })}>
+              <option value="">Tous les tags</option>
+              {db.tags.map((t) => (
+                <option key={t.id} value={t.id}>
+                  #{t.nom}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field
+            label="Année de publication"
+            htmlFor="recherche-annee"
+            hint="Déterminée automatiquement à partir de la date de publication."
+          >
+            <Select
+              id="recherche-annee"
+              value={annee}
+              onChange={(e) => maj({ annee: e.target.value })}
             >
-              <Select id="recherche-cat" value={cat} onChange={(e) => maj({ cat: e.target.value })}>
-                <option value="">Toutes les catégories</option>
-                {db.categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.nom}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Tag" htmlFor="recherche-tag">
-              <Select id="recherche-tag" value={tag} onChange={(e) => maj({ tag: e.target.value })}>
-                <option value="">Tous les tags</option>
-                {db.tags.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    #{t.nom}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field
-              label="Année de publication"
-              htmlFor="recherche-annee"
-              hint="Déterminée automatiquement à partir de la date de publication."
+              <option value="">Toutes les années</option>
+              {annees.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Trier par" htmlFor="recherche-tri">
+            <Select id="recherche-tri" value={tri} onChange={(e) => maj({ tri: e.target.value })}>
+              <option value="date">Date</option>
+              <option value="titre">Titre</option>
+              <option value="auteur">Auteur</option>
+            </Select>
+          </Field>
+          <Field label="Ordre" htmlFor="recherche-ordre">
+            <Select
+              id="recherche-ordre"
+              value={ordre}
+              onChange={(e) => maj({ ordre: e.target.value })}
             >
-              <Select
-                id="recherche-annee"
-                value={annee}
-                onChange={(e) => maj({ annee: e.target.value })}
-              >
-                <option value="">Toutes les années</option>
-                {annees.map((a) => (
-                  <option key={a} value={a}>
-                    {a}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Trier par" htmlFor="recherche-tri">
-              <Select id="recherche-tri" value={tri} onChange={(e) => maj({ tri: e.target.value })}>
-                <option value="date">Date</option>
-                <option value="titre">Titre</option>
-                <option value="auteur">Auteur</option>
-              </Select>
-            </Field>
-            <Field label="Ordre" htmlFor="recherche-ordre">
-              <Select
-                id="recherche-ordre"
-                value={ordre}
-                onChange={(e) => maj({ ordre: e.target.value })}
-              >
-                <option value="decroissant">Décroissant</option>
-                <option value="croissant">Croissant</option>
-              </Select>
-            </Field>
-          </div>
-        ) : null}
+              <option value="decroissant">Décroissant</option>
+              <option value="croissant">Croissant</option>
+            </Select>
+          </Field>
+        </div>
 
         {/* Critères actifs, réinitialisation et nombre de résultats */}
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          {rechercheActive ? (
+          {rechercheActive || params.has('page') ? (
             <Button
               type="button"
               variant="secondaire"
@@ -252,13 +244,13 @@ export function ArticlesExplorer({ titreResultats }: { titreResultats?: string }
           {puces.map((p) => (
             <span
               key={p.label}
-              className="inline-flex items-center gap-1.5 rounded-full bg-leaf-pale py-1 pl-3 pr-1.5 text-[0.875rem] font-bold text-forest"
+              className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-leaf-pale py-1 pl-3 pr-1.5 text-[0.875rem] font-bold text-forest"
             >
-              {p.label}
+              <span className="min-w-0 [overflow-wrap:anywhere]">{p.label}</span>
               <button
                 type="button"
                 onClick={p.onRetirer}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-full text-forest hover:bg-leaf hover:text-white"
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-forest hover:bg-leaf hover:text-white"
                 aria-label={`Retirer le critère ${p.label}`}
               >
                 <X aria-hidden="true" className="h-4 w-4" />
@@ -266,17 +258,12 @@ export function ArticlesExplorer({ titreResultats }: { titreResultats?: string }
             </span>
           ))}
           <p className="ml-auto text-[0.9375rem] text-mist" role="status">
-            {resultats.length} article{resultats.length > 1 ? 's' : ''} trouvé
-            {resultats.length > 1 ? 's' : ''}
-            {tri === 'date' && ordre === 'decroissant' && !rechercheActive
+            {resultats.length} {resultats.length === 1 ? 'article trouvé' : 'articles trouvés'}
+            {!rechercheActive && resultats.length > 0
               ? ' — du plus récent au plus ancien'
               : ''}
           </p>
         </div>
-        <p className="mt-2 text-[0.8125rem] text-mist">
-          La recherche porte sur le titre, le contenu, l'auteur, les catégories et les tags. Les
-          filtres sont combinables.
-        </p>
       </form>
 
       <h2 className="mt-10 text-xl text-forest">
