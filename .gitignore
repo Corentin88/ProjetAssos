@@ -29,3 +29,7 @@ back/generated/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Client Prisma généré
+/back/generated/
+/back/src/generated/
