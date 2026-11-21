@@ -1,0 +1,31 @@
+# Documentation et instructions IA locales
+/docs/
+/AGENTS.md
+/agents/
+/skills/
+**/.agents/
+**/.claude/
+**/.windsurf/
+
+# Variables d'environnement
+.env
+.env.*
+!.env.example
+
+# Dépendances
+node_modules/
+
+# Compilations et fichiers générés
+dist/
+build/
+coverage/
+.next/
+back/generated/
+
+# Logs
+*.log
+
+# IDE et système
+.idea/
+.DS_Store
+Thumbs.db

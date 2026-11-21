@@ -1,0 +1,319 @@
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { ChevronDown, RotateCcw, Search, SearchX, SlidersHorizontal, X } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import { useDb, useDbVersion } from '../../lib/db'
+import { getCategory, getTag, publishedYears, searchArticles } from '../../lib/selectors'
+import { Button, Field, Input, Select } from '../ui/form'
+import { EmptyState } from '../ui/feedback'
+import { Pagination } from '../ui/nav'
+import { ArticleCard } from './ArticleCard'
+
+const PAR_PAGE = 6
+
+/** Recherche progressive intégrée à la page des actualités (§24, §25) :
+ *  une barre de recherche toujours visible, un panneau de filtres dépliable
+ *  (les critères sont conservés quand on le referme), des résultats sur la
+ *  même page. L'état est porté par l'URL (q, annee, cat, tag, tri, ordre,
+ *  page) : retour depuis un article restaure la recherche, les filtres, le
+ *  tri, la page de pagination et la position de défilement. */
+export function ArticlesExplorer({ titreResultats }: { titreResultats?: string }) {
+  const db = useDb()
+  const version = useDbVersion()
+  const [params, setParams] = useSearchParams()
+
+  const q = params.get('q') ?? ''
+  const annee = params.get('annee') ?? ''
+  // Compatibilité : les anciens liens utilisaient « categorie » — le paramètre
+  // canonique est désormais « cat » (les deux sont acceptés à la lecture)
+  const cat = params.get('cat') ?? params.get('categorie') ?? ''
+  const tag = params.get('tag') ?? ''
+  const tri = (params.get('tri') ?? 'date') as 'date' | 'titre' | 'auteur'
+  const ordre = (params.get('ordre') ?? 'decroissant') as 'croissant' | 'decroissant'
+  const page = Math.max(1, Number(params.get('page') ?? '1') || 1)
+
+  /** Panneau de filtres : ouvert par défaut si des filtres avancés sont déjà
+   *  actifs (lien « recherche avancée », badge de catégorie ou de tag cliqué),
+   *  sinon fermé — la recherche simple est immédiatement visible. */
+  const [panneauOuvert, setPanneauOuvert] = useState(
+    () => Boolean(params.get('avancee')) || Boolean(annee || cat || tag),
+  )
+
+  // Le paramètre « avancee » est un signal à usage unique (lien « Recherche
+  // avancée », ancienne route /recherche) : ouvrir le panneau même si la page
+  // est déjà montée, puis retirer le paramètre de l'URL
+  useEffect(() => {
+    if (params.get('avancee')) {
+      setPanneauOuvert(true)
+      const next = new URLSearchParams(params)
+      next.delete('avancee')
+      setParams(next, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params])
+
+  const maj = (patch: Record<string, string | undefined>) => {
+    const next = new URLSearchParams(params)
+    Object.entries(patch).forEach(([k, v]) => {
+      if (v === undefined || v === '') next.delete(k)
+      else next.set(k, v)
+    })
+    if (!('page' in patch)) next.delete('page')
+    setParams(next, { replace: false })
+  }
+
+  const resultats = useMemo(
+    () =>
+      searchArticles({
+        q,
+        annee: annee || undefined,
+        categorieId: cat || undefined,
+        tagId: tag || undefined,
+        tri,
+        ordre,
+      }),
+    [version, q, annee, cat, tag, tri, ordre],
+  )
+
+  const totalPages = Math.max(1, Math.ceil(resultats.length / PAR_PAGE))
+  const pageCourante = Math.min(page, totalPages)
+  const visibles = resultats.slice((pageCourante - 1) * PAR_PAGE, pageCourante * PAR_PAGE)
+
+  const annees = publishedYears()
+
+  /** Nombre de critères avancés actifs (affiché sur le bouton « Filtres ») */
+  const nbFiltres = (annee ? 1 : 0) + (cat ? 1 : 0) + (tag ? 1 : 0)
+  const triPersonnalise = tri !== 'date' || ordre !== 'decroissant'
+  const rechercheActive = Boolean(q.trim()) || nbFiltres > 0 || triPersonnalise
+
+  const reinitialiser = () => {
+    // Les critères sont effacés mais le panneau garde son état : on ne perd
+    // pas le contexte de recherche en cours
+    setParams(new URLSearchParams(), { replace: false })
+  }
+
+  /** Puces des critères actifs, retirables individuellement */
+  const puces: { label: string; icone?: LucideIcon; onRetirer: () => void }[] = []
+  if (q.trim()) {
+    puces.push({ label: `« ${q.trim()} »`, onRetirer: () => maj({ q: undefined }) })
+  }
+  if (annee) puces.push({ label: `Année : ${annee}`, onRetirer: () => maj({ annee: undefined }) })
+  if (cat) {
+    const c = getCategory(cat)
+    if (c) puces.push({ label: `Catégorie : ${c.nom}`, onRetirer: () => maj({ cat: undefined }) })
+  }
+  if (tag) {
+    const t = getTag(tag)
+    if (t) puces.push({ label: `Tag : #${t.nom}`, onRetirer: () => maj({ tag: undefined }) })
+  }
+  if (tri !== 'date') {
+    puces.push({ label: `Tri : ${tri === 'titre' ? 'titre' : 'auteur'}`, onRetirer: () => maj({ tri: undefined }) })
+  }
+  if (ordre !== 'decroissant') {
+    puces.push({ label: 'Ordre : croissant', onRetirer: () => maj({ ordre: undefined }) })
+  }
+
+  return (
+    <div>
+      {/* Recherche progressive : barre simple + panneau de filtres dépliable */}
+      <form
+        role="search"
+        aria-label="Rechercher et filtrer les articles"
+        onSubmit={(e) => e.preventDefault()}
+        className="carte p-4 sm:p-6"
+      >
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <div className="relative flex-1">
+            <Search
+              aria-hidden="true"
+              className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-mist"
+            />
+            <Input
+              id="recherche-q"
+              type="search"
+              value={q}
+              placeholder="Rechercher : fête du village, chorale, auteur, thème…"
+              aria-label="Rechercher dans les articles (titre, contenu, auteur, catégories et tags)"
+              className="min-h-[52px] pl-12"
+              onChange={(e) => maj({ q: e.target.value })}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setPanneauOuvert((o) => !o)}
+            aria-expanded={panneauOuvert}
+            aria-controls="panneau-filtres"
+            className={`inline-flex min-h-[52px] shrink-0 items-center justify-center gap-2 rounded-xl px-5 font-bold transition-colors ${
+              panneauOuvert
+                ? 'bg-forest text-white hover:bg-forest-dark'
+                : 'border border-line bg-white text-forest hover:bg-leaf-pale'
+            }`}
+          >
+            <SlidersHorizontal aria-hidden="true" className="h-5 w-5" />
+            Filtres
+            {nbFiltres > 0 ? (
+              <span
+                className={`inline-flex min-w-[1.5rem] items-center justify-center rounded-full px-1.5 py-0.5 text-[0.8125rem] ${
+                  panneauOuvert ? 'bg-white/25' : 'bg-forest text-white'
+                }`}
+                aria-label={`${nbFiltres} filtre${nbFiltres > 1 ? 's' : ''} actif${nbFiltres > 1 ? 's' : ''}`}
+              >
+                {nbFiltres}
+              </span>
+            ) : null}
+            <ChevronDown
+              aria-hidden="true"
+              className={`h-5 w-5 transition-transform ${panneauOuvert ? 'rotate-180' : ''}`}
+            />
+          </button>
+        </div>
+
+        {/* Panneau de filtres : se déploie sous la barre, sur la même page ;
+            le refermer ne perd pas les critères (portés par l'URL) */}
+        {panneauOuvert ? (
+          <div
+            id="panneau-filtres"
+            className="mt-4 grid gap-x-5 gap-y-4 rounded-xl border border-line bg-sand p-4 sm:p-5 md:grid-cols-2 lg:grid-cols-3"
+          >
+            <Field
+              label="Catégorie"
+              htmlFor="recherche-cat"
+            >
+              <Select id="recherche-cat" value={cat} onChange={(e) => maj({ cat: e.target.value })}>
+                <option value="">Toutes les catégories</option>
+                {db.categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nom}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Tag" htmlFor="recherche-tag">
+              <Select id="recherche-tag" value={tag} onChange={(e) => maj({ tag: e.target.value })}>
+                <option value="">Tous les tags</option>
+                {db.tags.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    #{t.nom}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field
+              label="Année de publication"
+              htmlFor="recherche-annee"
+              hint="Déterminée automatiquement à partir de la date de publication."
+            >
+              <Select
+                id="recherche-annee"
+                value={annee}
+                onChange={(e) => maj({ annee: e.target.value })}
+              >
+                <option value="">Toutes les années</option>
+                {annees.map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Trier par" htmlFor="recherche-tri">
+              <Select id="recherche-tri" value={tri} onChange={(e) => maj({ tri: e.target.value })}>
+                <option value="date">Date</option>
+                <option value="titre">Titre</option>
+                <option value="auteur">Auteur</option>
+              </Select>
+            </Field>
+            <Field label="Ordre" htmlFor="recherche-ordre">
+              <Select
+                id="recherche-ordre"
+                value={ordre}
+                onChange={(e) => maj({ ordre: e.target.value })}
+              >
+                <option value="decroissant">Décroissant</option>
+                <option value="croissant">Croissant</option>
+              </Select>
+            </Field>
+          </div>
+        ) : null}
+
+        {/* Critères actifs, réinitialisation et nombre de résultats */}
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          {rechercheActive ? (
+            <Button
+              type="button"
+              variant="secondaire"
+              size="petit"
+              onClick={reinitialiser}
+            >
+              <RotateCcw aria-hidden="true" className="h-4 w-4" />
+              Réinitialiser
+            </Button>
+          ) : null}
+          {puces.map((p) => (
+            <span
+              key={p.label}
+              className="inline-flex items-center gap-1.5 rounded-full bg-leaf-pale py-1 pl-3 pr-1.5 text-[0.875rem] font-bold text-forest"
+            >
+              {p.label}
+              <button
+                type="button"
+                onClick={p.onRetirer}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full text-forest hover:bg-leaf hover:text-white"
+                aria-label={`Retirer le critère ${p.label}`}
+              >
+                <X aria-hidden="true" className="h-4 w-4" />
+              </button>
+            </span>
+          ))}
+          <p className="ml-auto text-[0.9375rem] text-mist" role="status">
+            {resultats.length} article{resultats.length > 1 ? 's' : ''} trouvé
+            {resultats.length > 1 ? 's' : ''}
+            {tri === 'date' && ordre === 'decroissant' && !rechercheActive
+              ? ' — du plus récent au plus ancien'
+              : ''}
+          </p>
+        </div>
+        <p className="mt-2 text-[0.8125rem] text-mist">
+          La recherche porte sur le titre, le contenu, l'auteur, les catégories et les tags. Les
+          filtres sont combinables.
+        </p>
+      </form>
+
+      <h2 className="mt-10 text-xl text-forest">
+        {titreResultats ?? 'Résultats'}
+      </h2>
+
+      {visibles.length === 0 ? (
+        <div className="mt-4">
+          <EmptyState
+            icon={SearchX}
+            title="Aucun article ne correspond à votre recherche"
+            description="Essayez avec d'autres mots-clés, ou retirez certains filtres pour élargir la recherche."
+            action={
+              <Button variant="secondaire" onClick={reinitialiser}>
+                <RotateCcw aria-hidden="true" className="h-4 w-4" />
+                Réinitialiser les critères
+              </Button>
+            }
+          />
+        </div>
+      ) : (
+        <>
+          <ul className="mt-4 grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+            {visibles.map((a) => (
+              <li key={a.id} className="h-full">
+                <ArticleCard article={a} />
+              </li>
+            ))}
+          </ul>
+          <Pagination
+            page={pageCourante}
+            totalPages={totalPages}
+            onPageChange={(p) => maj({ page: String(p) })}
+            label="Pagination des articles"
+          />
+        </>
+      )}
+    </div>
+  )
+}

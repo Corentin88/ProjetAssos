@@ -1,0 +1,193 @@
+import type { Article, Block, Comment, Media, User } from '../types'
+import { db } from './db'
+
+// ------------------------------------------------------------
+// Sélecteurs de lecture (helpers réutilisables)
+// ------------------------------------------------------------
+
+/** Articles visibles publiquement (publiés uniquement) */
+export function publishedArticles(): Article[] {
+  return db.articles
+    .filter((a) => a.statut === 'publie')
+    .sort((a, b) => (b.publishedAt ?? b.updatedAt).localeCompare(a.publishedAt ?? a.updatedAt))
+}
+
+export function getArticleById(id: string): Article | undefined {
+  return db.articles.find((a) => a.id === id)
+}
+
+export function getArticleBySlug(slug: string): Article | undefined {
+  return db.articles.find((a) => a.slug === slug)
+}
+
+/** Version actuellement visible publiquement d'un article (§20) */
+export function publicBlocks(article: Article): Block[] {
+  return article.publicSnapshot ?? article.blocks
+}
+
+export function getCategory(id: string) {
+  return db.categories.find((c) => c.id === id)
+}
+export function getTag(id: string) {
+  return db.tags.find((t) => t.id === id)
+}
+export function getMedia(id: string | null | undefined): Media | undefined {
+  if (!id) return undefined
+  return db.medias.find((m) => m.id === id)
+}
+
+/** Visuel d'un article : couverture choisie > première image de l'article >
+ *  visuel par défaut (§22) */
+export function articleCoverMediaId(article: Article): string | null {
+  if (article.coverMediaId) return article.coverMediaId
+  const blocks = publicBlocks(article)
+  const imgBlock = blocks.find((b) => b.type === 'image' && b.mediaId)
+  return imgBlock?.mediaId ?? getMedia('m-visuel-defaut')?.id ?? null
+}
+
+export function getUser(id: string | null | undefined): User | undefined {
+  if (!id) return undefined
+  return db.users.find((u) => u.id === id)
+}
+
+/** Auteur d'un article en libellé lisible */
+export function articleAuthorLabel(article: Article): string {
+  const u = getUser(article.auteurId)
+  return u ? `${u.prenom} ${u.nom}` : 'Utilisateur supprimé'
+}
+
+export function authorLabel(comment: Comment): string {
+  if (comment.auteurId) {
+    const u = getUser(comment.auteurId)
+    if (u) return `${u.prenom} ${u.nom}`
+    return comment.auteurLabel
+  }
+  return comment.auteurLabel || 'Utilisateur supprimé'
+}
+
+/** Commentaires visibles publiquement d'un article (§28) */
+export function visibleComments(articleId: string): Comment[] {
+  return db.comments.filter(
+    (c) => c.articleId === articleId && !c.deletedByAuthor && !c.moderation,
+  )
+}
+
+/** Threads : commentaires de premier niveau + leurs réponses.
+ *  Les commentaires supprimés (par l'auteur ou par modération) restent
+ *  matérialisés par le placeholder « Commentaire supprimé » et leurs
+ *  réponses visibles sont conservées (§30, §31). */
+export function commentThreads(articleId: string): { comment: Comment; replies: Comment[] }[] {
+  const all = visibleComments(articleId)
+  const tousRacines = db.comments
+    .filter((c) => c.articleId === articleId && c.parentId === null)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  return tousRacines.map((comment) => ({
+    comment,
+    replies: all.filter((c) => c.parentId === comment.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+  }))
+}
+
+/** Nombre de commentaires publics publiés par un utilisateur (§14) */
+export function userPublicCommentCount(userId: string): number {
+  return db.comments.filter(
+    (c) => c.auteurId === userId && !c.deletedByAuthor && !c.moderation,
+  ).length
+}
+
+/** Commentaires publics d'un utilisateur, du plus récent au plus ancien (§15) */
+export function userPublicComments(userId: string): Comment[] {
+  return db.comments
+    .filter((c) => c.auteurId === userId && !c.deletedByAuthor && !c.moderation)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
+/** « Mes commentaires » : exclut les supprimés par l'auteur (§30) */
+export function myComments(userId: string): Comment[] {
+  return db.comments
+    .filter((c) => c.auteurId === userId && !c.deletedByAuthor)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
+// ----- Recherche et filtres des articles (§24) -----
+export interface ArticleQuery {
+  q?: string
+  annee?: string
+  categorieId?: string
+  tagId?: string
+  tri?: 'date' | 'titre' | 'auteur'
+  ordre?: 'croissant' | 'decroissant'
+}
+
+function articleText(a: Article): string {
+  const author = getUser(a.auteurId)
+  return [
+    a.titre,
+    publicBlocks(a).map((b) => b.text ?? '').join(' '),
+    author ? `${author.prenom} ${author.nom}` : '',
+    a.categorieIds.map((id) => getCategory(id)?.nom ?? '').join(' '),
+    a.tagIds.map((id) => getTag(id)?.nom ?? '').join(' '),
+  ]
+    .join(' ')
+    .toLowerCase()
+}
+
+export function searchArticles(query: ArticleQuery): Article[] {
+  let list = publishedArticles()
+  if (query.q && query.q.trim()) {
+    const q = query.q.trim().toLowerCase()
+    list = list.filter((a) => articleText(a).includes(q))
+  }
+  if (query.annee) {
+    list = list.filter((a) => String(new Date(a.publishedAt ?? a.updatedAt).getFullYear()) === query.annee)
+  }
+  if (query.categorieId) {
+    list = list.filter((a) => a.categorieIds.includes(query.categorieId!))
+  }
+  if (query.tagId) {
+    list = list.filter((a) => a.tagIds.includes(query.tagId!))
+  }
+  const tri = query.tri ?? 'date'
+  const ordre = query.ordre ?? 'decroissant'
+  const dir = ordre === 'croissant' ? 1 : -1
+  list = [...list].sort((a, b) => {
+    if (tri === 'titre') return dir * a.titre.localeCompare(b.titre, 'fr')
+    if (tri === 'auteur') {
+      const na = (getUser(a.auteurId)?.nom ?? '').toLowerCase()
+      const nb = (getUser(b.auteurId)?.nom ?? '').toLowerCase()
+      return dir * na.localeCompare(nb, 'fr')
+    }
+    return dir * (a.publishedAt ?? a.updatedAt).localeCompare(b.publishedAt ?? b.updatedAt)
+  })
+  return list
+}
+
+export function publishedYears(): string[] {
+  return [...new Set(publishedArticles().map((a) => String(new Date(a.publishedAt ?? a.updatedAt).getFullYear())))].sort((a, b) => Number(b) - Number(a))
+}
+
+// ----- notifications -----
+export function unreadNotificationCount(userId: string): number {
+  return db.notifications.filter((n) => n.userId === userId && !n.lue).length
+}
+
+export function userNotifications(userId: string): UserNotificationLike[] {
+  return db.notifications
+    .filter((n) => n.userId === userId)
+    .sort((a, b) => b.at.localeCompare(a.at))
+}
+export interface UserNotificationLike {
+  id: string
+  type: string
+  titre: string
+  texte: string
+  at: string
+  lue: boolean
+  link?: string
+}
+
+// ----- utilisateurs : dernier admin -----
+export function isLastActiveAdmin(userId: string): boolean {
+  const u = getUser(userId)
+  if (!u || u.role !== 'administrateur') return false
+  return db.users.filter((x) => x.role === 'administrateur').length <= 1
+}
