@@ -77,27 +77,26 @@ export function visibleComments(articleId: string): Comment[] {
  *  matérialisés par le placeholder « Commentaire supprimé » et leurs
  *  réponses visibles sont conservées (§30, §31). */
 export function commentThreads(articleId: string): { comment: Comment; replies: Comment[] }[] {
-  const all = visibleComments(articleId)
-  const tousRacines = db.comments
-    .filter((c) => c.articleId === articleId && c.parentId === null)
+  const discussion = db.comments
+    .filter((c) => c.articleId === articleId)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  return tousRacines.map((comment) => ({
+  return discussion.filter((c) => c.parentId === null).map((comment) => ({
     comment,
-    replies: all.filter((c) => c.parentId === comment.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    replies: discussion.filter((c) => c.parentId === comment.id),
   }))
 }
 
 /** Nombre de commentaires publics publiés par un utilisateur (§14) */
 export function userPublicCommentCount(userId: string): number {
-  return db.comments.filter(
-    (c) => c.auteurId === userId && !c.deletedByAuthor && !c.moderation,
-  ).length
+  return userPublicComments(userId).length
 }
 
 /** Commentaires publics d'un utilisateur, du plus récent au plus ancien (§15) */
 export function userPublicComments(userId: string): Comment[] {
+  // Un commentaire sort du profil dès que l'article quitte les actualités publiques.
+  const articlesPublics = new Set(publishedArticles().map((article) => article.id))
   return db.comments
-    .filter((c) => c.auteurId === userId && !c.deletedByAuthor && !c.moderation)
+    .filter((c) => c.auteurId === userId && !c.deletedByAuthor && !c.moderation && articlesPublics.has(c.articleId))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 

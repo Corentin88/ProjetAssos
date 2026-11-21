@@ -1,5 +1,17 @@
 @import 'tailwindcss';
 
+/* Les surfaces et accents de fond évoluent sans modifier les textes blancs. */
+@theme inline {
+  --background-color-white: var(--affichage-surface);
+  --background-color-forest: var(--affichage-fond-forest, var(--color-forest));
+  --background-color-leaf: var(--affichage-fond-leaf, var(--color-leaf));
+  --background-color-ocre: var(--affichage-fond-ocre, var(--color-ocre));
+  --background-color-ocre-dark: var(--affichage-fond-ocre-dark, var(--color-ocre-dark));
+  --background-color-brique: var(--affichage-fond-brique, var(--color-brique));
+  --background-color-bark: var(--affichage-fond-bark, var(--color-bark));
+  --text-color-leaf-pale: var(--affichage-texte-inverse, var(--color-leaf-pale));
+}
+
 @theme {
   /* Palette nature revisitée — identité commune du site public et de
      l'administration (verts profonds, accents chauds, fonds apaisés).
@@ -19,6 +31,7 @@
   --color-bark: #1f2c25; /* texte principal */
   --color-mist: #55645b; /* texte secondaire */
   --color-line: #e4e4dc; /* bordures fines */
+  --color-controle: #78877c; /* contour des champs */
   --color-brique: #b3392b; /* actions destructives */
   --color-brique-dark: #a02f22;
   --color-brique-pale: #f8e5e1;
@@ -39,7 +52,7 @@
 
 @layer base {
   html {
-    font-size: 100%;
+    font-size: var(--affichage-taille, 100%);
     scroll-behavior: smooth;
   }
 
@@ -122,8 +135,8 @@
     left: -9999px;
     top: 0;
     z-index: 100;
-    background: var(--color-forest);
     color: #fff;
+    background: var(--affichage-fond-forest, var(--color-forest));
     padding: 0.75rem 1.25rem;
     border-radius: 0 0 0.75rem 0.75rem;
     font-weight: 700;
@@ -137,14 +150,55 @@
   .carte {
     border: 1px solid var(--color-line);
     border-radius: 1rem;
-    background: #fff;
+    background: var(--affichage-surface);
     box-shadow: var(--shadow-carte);
   }
-  .carte-hover {
-    transition: box-shadow 0.2s ease, transform 0.2s ease;
+  .carte-article-surface {
+    transition: box-shadow 250ms ease, transform 250ms ease;
   }
-  .carte-hover:hover {
+
+  .carte-article-image {
+    transition: transform 250ms ease;
+  }
+
+  .carte-hover:focus-within > .carte-article-surface {
     box-shadow: var(--shadow-carte-hover);
+  }
+
+  /* Le lien du titre couvre la carte. Les badges superposés gardent leurs propres cibles. */
+  .carte-article-lien::after {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    content: '';
+  }
+
+  .carte-article-lien:focus-visible::after {
+    border-radius: calc(var(--radius-card) - 1px);
+    box-shadow: inset 0 0 0 3px var(--color-ocre-light), inset 0 0 0 5px var(--affichage-surface);
+    outline: 2px solid transparent;
+    outline-offset: -2px;
+  }
+
+  .carte-article-badge:focus-visible {
+    box-shadow: 0 0 0 2px var(--affichage-surface);
+  }
+
+  @media (hover: hover) {
+    .carte-hover:hover > .carte-article-surface {
+      box-shadow: var(--shadow-carte-hover);
+    }
+  }
+
+  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
+    /* Le conteneur reste fixe pour stabiliser le survol au bord de la carte. */
+    html:not([data-mouvements-reduits]) .carte-hover:hover > .carte-article-surface {
+      transform: translateY(-4px);
+    }
+
+    html:not([data-mouvements-reduits]) .carte-hover:hover .carte-article-image {
+      transform: scale(1.04);
+    }
   }
 
   /* Contenu rendu depuis les blocs de l'éditeur */
@@ -204,4 +258,147 @@
       animation: none;
     }
   }
+}
+
+:root {
+  --affichage-surface: #fff;
+  color-scheme: light;
+}
+
+html[data-theme-affichage='sombre'] {
+  color-scheme: dark;
+  --affichage-surface: #202b24;
+  --affichage-fond-forest: #285d43;
+  --affichage-fond-leaf: #326042;
+  --affichage-fond-ocre: #80471b;
+  --affichage-fond-ocre-dark: #67350f;
+  --affichage-fond-brique: #852e34;
+  --affichage-fond-bark: #17231b;
+  --affichage-texte-inverse: #c9f7d5;
+  --color-forest: #a9e2ba;
+  --color-forest-dark: #123225;
+  --color-forest-light: #2b5b42;
+  --color-leaf: #a4d7b0;
+  --color-leaf-light: #a5d6b4;
+  --color-leaf-pale: #293e31;
+  --color-sand: #161e19;
+  --color-sand-dark: #29362d;
+  --color-admin: #141c17;
+  --color-line: #708277;
+  --color-admin-line: #708277;
+  --color-controle: #829689;
+  --color-bark: #f4f7f4;
+  --color-mist: #c3d0c7;
+  --color-ocre: #ffd2a5;
+  --color-ocre-dark: #ffcca2;
+  --color-ocre-light: #ffc275;
+  --color-ocre-pale: #483226;
+  --color-brique: #ffb1b6;
+  --color-brique-dark: #752731;
+  --color-brique-pale: #442b30;
+}
+
+html[data-contraste-renforce][data-theme-affichage='clair'] {
+  --color-bark: #101710;
+  --color-mist: #26352c;
+  --color-forest: #123b29;
+  --color-leaf: #275535;
+  --color-ocre: #713804;
+  --color-brique: #811e1d;
+  --color-line: #56665b;
+  --color-admin-line: #56665b;
+  --color-controle: var(--color-line);
+  --color-ocre-light: #994709;
+}
+
+html[data-contraste-renforce][data-theme-affichage='sombre'] {
+  --affichage-surface: #101612;
+  --color-sand: #090d0a;
+  --color-admin: #090d0a;
+  --color-bark: #fff;
+  --color-mist: #f0f7f1;
+  --color-forest: #c9f7d5;
+  --color-ocre: #ffdebd;
+  --color-brique: #ffd0d4;
+  --color-line: #b3c7ba;
+  --color-admin-line: #b3c7ba;
+  --color-controle: var(--color-line);
+}
+
+html[data-contraste-renforce] :where(input, textarea)::placeholder {
+  color: var(--color-mist);
+  opacity: 1;
+}
+
+html[data-theme-affichage='sombre'] .bg-forest-dark a[aria-current='page'] {
+  background-color: rgb(255 255 255 / 15%);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+html[data-theme-affichage='sombre'] .focus-inverse :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline-color: var(--color-ocre-light);
+}
+
+html[data-confort-dyslexie] {
+  --font-sans: Verdana, 'Atkinson Hyperlegible', sans-serif;
+}
+
+html[data-espacement-interligne] :where(body, p, li, dt, dd, h1, h2, h3, h4, a, button, label, legend, input, textarea, select, summary) {
+  line-height: var(--affichage-interligne);
+}
+
+html[data-espacement-lettres] :where(body, p, li, dt, dd, h1, h2, h3, h4, a, button, label, legend, input, textarea, select, summary) {
+  letter-spacing: var(--affichage-lettres);
+}
+
+html[data-espacement-mots] :where(body, p, li, dt, dd, h1, h2, h3, h4, a, button, label, legend, input, textarea, select, summary) {
+  word-spacing: var(--affichage-mots);
+}
+
+html[data-espacement-paragraphes] main p:not(:last-child) {
+  margin-block-end: var(--affichage-paragraphes);
+}
+
+html[data-navigation-compacte] :where(main, footer, dialog) {
+  overflow-wrap: anywhere;
+}
+
+html[data-reperes-renforces] :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--color-ocre-light);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px var(--affichage-surface);
+}
+
+html[data-reperes-renforces] :where([aria-current='page'], [aria-current='true']) {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+
+html[data-reperes-renforces] :where(main h1, main h2) {
+  border-inline-start: 0.2em solid currentColor;
+  padding-inline-start: 0.45em;
+}
+
+html[data-reperes-renforces] :where(input:not([type='range']), select, textarea) {
+  border-width: 2px;
+}
+
+html[data-liens-soulignes] :where(a[href], a[href] > span) {
+  text-decoration: underline;
+  text-decoration-thickness: max(1px, 0.08em);
+  text-underline-offset: 0.18em;
+}
+
+html[data-mouvements-reduits] {
+  scroll-behavior: auto;
+}
+
+html[data-mouvements-reduits] :where(*, *::before, *::after) {
+  animation: none !important;
+  transition: none !important;
+}
+
+html[data-mouvements-reduits] .carte img {
+  scale: none !important;
 }

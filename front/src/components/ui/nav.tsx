@@ -3,6 +3,24 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useEffect, useRef } from 'react'
 
+export function SkipLink({ cible }: { cible: string }) {
+  return (
+    <a
+      href={`#${cible}`}
+      className="skip-link"
+      onClick={(event) => {
+        // HashRouter utilise le fragment pour la route. Le focus est déplacé sans le modifier.
+        event.preventDefault()
+        const contenu = document.getElementById(cible)
+        contenu?.focus({ preventScroll: true })
+        contenu?.scrollIntoView({ block: 'start', behavior: 'instant' })
+      }}
+    >
+      Aller au contenu principal
+    </a>
+  )
+}
+
 // ============================================================
 // Pagination accessible (RGAA — liste de liens, page courante indiquée)
 // ============================================================

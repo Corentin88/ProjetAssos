@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, Pause, Play } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Newspaper, Pause, Play } from 'lucide-react'
 import type { Article } from '../../types'
 import { articleAuthorLabel, articleCoverMediaId, getMedia, publicBlocks } from '../../lib/selectors'
 import { formatDate } from '../../lib/format'
 import { mediaUrl } from '../../lib/assets'
+import { Button, buttonClasses } from '../ui/form'
+import { useAffichage } from '../layout/Affichage'
 
 /** Carrousel d'articles mis en avant (§26) — accessibilité RGAA :
  *  contrôles explicites, pause possible, autoplay respecte
@@ -12,132 +14,126 @@ import { mediaUrl } from '../../lib/assets'
 export function ArticleCarousel({ articles }: { articles: Article[] }) {
   const [index, setIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
-  const regionRef = useRef<HTMLDivElement>(null)
+  const { reduireAnimations } = useAffichage()
+  const total = articles.length
+  const rotation = playing && !reduireAnimations && total > 1
 
-  // Autoplay désactivé si l'utilisateur préfère réduire les animations
-  const reducedMotion =
-    typeof window !== 'undefined' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  // Une réduction activée en cours de lecture arrête aussi la rotation du carrousel.
+  useEffect(() => {
+    if (reduireAnimations) setPlaying(false)
+  }, [reduireAnimations])
 
   useEffect(() => {
-    if (!playing || reducedMotion) return
-    const t = setInterval(() => {
-      setIndex((i) => (i + 1) % articles.length)
-    }, 6000)
-    return () => clearInterval(t)
-  }, [playing, reducedMotion, articles.length])
+    if (!rotation) return
+    const timer = window.setInterval(() => setIndex((i) => (i + 1) % total), 6000)
+    return () => window.clearInterval(timer)
+  }, [rotation, total])
 
-  const go = useCallback(
-    (dir: 1 | -1) => setIndex((i) => (i + dir + articles.length) % articles.length),
-    [articles.length],
-  )
+  // Un article peut être retiré de la liste en cours de consultation.
+  const indexActif = Math.min(index, total - 1)
+  if (total === 0) return null
 
-  // Pause automatique lorsque la région a le focus ou est survolée
-  useEffect(() => {
-    const el = regionRef.current
-    if (!el) return
-    const stop = () => setPlaying(false)
-    el.addEventListener('mouseenter', stop)
-    el.addEventListener('focusin', stop)
-    return () => {
-      el.removeEventListener('mouseenter', stop)
-      el.removeEventListener('focusin', stop)
-    }
-  }, [])
+  const article = articles[indexActif]
+  const cover = getMedia(articleCoverMediaId(article))
+  const date = article.publishedAt ?? article.updatedAt
+  const extrait = publicBlocks(article).find((b) => b.type === 'paragraphe' && b.text)?.text
 
-  if (articles.length === 0) return null
-  const current = articles[index]
-  const coverId = articleCoverMediaId(current)
-  const cover = getMedia(coverId)
-  const extrait =
-    publicBlocks(current).find((b) => b.type === 'paragraphe' && b.text)?.text?.slice(0, 220) ?? ''
+  const changerArticle = (direction: -1 | 1) => {
+    setPlaying(false)
+    setIndex((indexActif + direction + total) % total)
+  }
 
+  // Pause automatique lorsque la région a le focus ou est survolée.
   return (
     <section
-      ref={regionRef}
       aria-roledescription="carrousel"
       aria-label="Articles mis en avant"
       className="carte overflow-hidden"
+      onMouseEnter={() => setPlaying(false)}
+      onFocus={() => setPlaying(false)}
     >
-      <div className="relative">
-        {cover ? (
-          <img src={mediaUrl(cover.file)} alt="" className="h-72 w-full object-cover md:h-96" />
-        ) : (
-          <div className="h-72 w-full bg-leaf-pale md:h-96" aria-hidden="true" />
-        )}
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-bark/95 via-bark/70 to-transparent p-6 pt-16 text-white">
-          <p className="text-[0.875rem] font-bold uppercase tracking-wide text-white/85">
-            À la une
+      <div
+        aria-live={rotation ? 'off' : 'polite'}
+        aria-atomic="true"
+        className="grid md:min-h-60 md:grid-cols-[1.15fr_1fr]"
+      >
+        <div className="relative h-44 overflow-hidden bg-leaf-pale sm:h-60 md:h-auto">
+          {cover ? (
+            <img src={mediaUrl(cover.file)} alt="" className="absolute inset-0 h-full w-full object-cover" />
+          ) : (
+            <span className="absolute inset-0 grid place-items-center" aria-hidden="true">
+              <Newspaper className="h-14 w-14 text-forest/30" />
+            </span>
+          )}
+        </div>
+        <div className="min-w-0 self-center p-5 sm:p-7">
+          <p className="text-sm text-mist">
+            <time dateTime={date}>{formatDate(date)}</time>
+            {' · '}
+            {articleAuthorLabel(article)}
           </p>
-          <p className="mt-1 text-xl font-bold leading-snug md:text-2xl">{current.titre}</p>
-          <p className="mt-1 text-[0.9375rem] text-white/85">
-            Par {articleAuthorLabel(current)} — {formatDate(current.publishedAt ?? current.updatedAt)}
-          </p>
-          {extrait ? <p className="mt-2 hidden max-w-2xl text-white/90 md:block">{extrait}…</p> : null}
+          <h3 className="mt-2 text-xl leading-tight text-forest [overflow-wrap:anywhere] sm:text-2xl">
+            {article.titre}
+          </h3>
+          {extrait ? <p className="mt-2 line-clamp-3 text-base text-mist [overflow-wrap:anywhere]">{extrait}</p> : null}
           <Link
-            to={`/actualites/${current.slug}`}
-            className="mt-3 inline-flex min-h-[44px] items-center rounded-xl bg-white px-4 font-bold text-forest hover:bg-sand"
+            to={`/actualites/${article.slug}`}
+            state={{ from: '/' }}
+            className={`mt-4 ${buttonClasses('primaire', 'petit')}`}
           >
-            Lire l'article
-            <span className="sr-only"> : {current.titre}</span>
+            Lire l’article
+            <span className="sr-only"> : {article.titre}</span>
           </Link>
         </div>
       </div>
 
       {/* Contrôles du carrousel */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-white px-4 py-3">
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => go(-1)}
-            className="inline-flex min-h-[48px] items-center gap-2 rounded-xl border border-line bg-white px-4 font-bold text-forest hover:bg-leaf-pale"
-          >
-            <ChevronLeft aria-hidden="true" className="h-5 w-5" />
-            Précédent
-          </button>
-          <button
-            type="button"
-            onClick={() => go(1)}
-            className="inline-flex min-h-[48px] items-center gap-2 rounded-xl border border-line bg-white px-4 font-bold text-forest hover:bg-leaf-pale"
-          >
-            Suivant
-            <ChevronRight aria-hidden="true" className="h-5 w-5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setPlaying((p) => !p)}
-            aria-pressed={playing}
-            className="inline-flex min-h-[48px] items-center gap-2 rounded-xl border border-line bg-white px-4 font-bold text-forest hover:bg-leaf-pale"
-          >
-            {playing ? (
-              <>
-                <Pause aria-hidden="true" className="h-5 w-5" />
-                Mettre en pause
-              </>
-            ) : (
-              <>
-                <Play aria-hidden="true" className="h-5 w-5" />
-                Lancer le défilement automatique
-              </>
-            )}
-          </button>
+      {total > 1 ? (
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-line bg-white px-3 py-2.5 sm:px-5">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondaire" size="petit" onClick={() => changerArticle(-1)}>
+              <ChevronLeft aria-hidden="true" className="h-5 w-5" />
+              <span className="sr-only sm:not-sr-only">Précédent</span>
+            </Button>
+            <Button variant="secondaire" size="petit" onClick={() => changerArticle(1)}>
+              <span className="sr-only sm:not-sr-only">Suivant</span>
+              <ChevronRight aria-hidden="true" className="h-5 w-5" />
+            </Button>
+            {!reduireAnimations ? (
+              <Button
+                variant="secondaire"
+                size="petit"
+                onClick={() => setPlaying((actif) => !actif)}
+                aria-label={rotation ? 'Pause du défilement' : 'Lecture automatique'}
+              >
+                {rotation ? <Pause aria-hidden="true" className="h-4 w-4" /> : <Play aria-hidden="true" className="h-4 w-4" />}
+                {rotation ? 'Pause' : 'Lecture auto'}
+              </Button>
+            ) : null}
+          </div>
+          <ul className="flex gap-1" aria-label="Choisir l’article affiché">
+            {articles.map((a, i) => (
+              <li key={a.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPlaying(false)
+                    setIndex(i)
+                  }}
+                  aria-label={`Afficher l’article ${i + 1} sur ${total} : ${a.titre}`}
+                  aria-current={i === indexActif ? 'true' : undefined}
+                  className="grid h-8 w-8 place-items-center rounded-full text-forest hover:bg-leaf-pale"
+                >
+                  <span
+                    aria-hidden="true"
+                    className={`h-2.5 w-2.5 rounded-full border border-forest ${i === indexActif ? 'bg-forest' : ''}`}
+                  />
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
-        <ul className="flex gap-2" aria-label="Choisir l'article affiché">
-          {articles.map((a, i) => (
-            <li key={a.id}>
-              <button
-                type="button"
-                onClick={() => setIndex(i)}
-                aria-label={`Afficher l'article ${i + 1} sur ${articles.length} : ${a.titre}`}
-                aria-current={i === index}
-                className={`inline-block h-5 w-5 rounded-full border ${
-                  i === index ? 'border-forest bg-forest' : 'border-line bg-white'
-                }`}
-              />
-            </li>
-          ))}
-        </ul>
-      </div>
+      ) : null}
     </section>
   )
 }

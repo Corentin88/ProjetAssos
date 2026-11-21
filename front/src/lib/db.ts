@@ -286,7 +286,8 @@ export function login(email: string, password: string): LoginResult {
 
 export function loginGoogle(): LoginResult {
   // Maquette : connexion avec le compte de démonstration Google
-  const u = db.users.find((x) => x.id === 'u4')!
+  const u = db.users.find((x) => x.id === 'u4')
+  if (!u) return { ok: false, error: 'Le compte Google de démonstration est indisponible.' }
   if (u.statut === 'suspendu') return { ok: false, error: 'Ce compte est suspendu.' }
   setSession({ userId: u.id, via: 'google' })
   u.lastActivityAt = now()

@@ -80,23 +80,17 @@ export default function App() {
             <Route path="/mentions-legales" element={<MentionsLegales />} />
             <Route path="/confidentialite" element={<Confidentialite />} />
             <Route path="/accessibilite" element={<Accessibilite />} />
-            <Route path="*" element={<PageIntrouvable />} />
-          </Route>
 
-          {/* Espace personnel « Mon compte » (§13) */}
-          <Route
-            path="/mon-compte"
-            element={
-              <RequireAuth>
-                <MonCompte />
-              </RequireAuth>
-            }
-          >
-            <Route index element={<Profil />} />
-            <Route path="securite" element={<Securite />} />
-            <Route path="mes-commentaires" element={<MesCommentaires />} />
-            <Route path="notifications" element={<NotificationsPage />} />
-            <Route path="supprimer" element={<SuppressionCompte />} />
+            {/* Espace personnel « Mon compte » (§13) */}
+            <Route path="/mon-compte" element={<MonCompte />}>
+              <Route index element={<Profil />} />
+              <Route path="securite" element={<Securite />} />
+              <Route path="mes-commentaires" element={<MesCommentaires />} />
+              <Route path="notifications" element={<NotificationsPage />} />
+              <Route path="supprimer" element={<SuppressionCompte />} />
+            </Route>
+
+            <Route path="*" element={<PageIntrouvable />} />
           </Route>
 
           {/* Administration (§2.3, §37 à §41) */}

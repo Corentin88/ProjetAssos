@@ -1,25 +1,31 @@
-import { Outlet, useLocation } from 'react-router-dom'
-import { useEffect } from 'react'
+import { matchPath, Outlet, useLocation } from 'react-router-dom'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { SiteHeader } from './SiteHeader'
 import { SiteFooter } from './SiteFooter'
+import { SkipLink } from '../ui/nav'
 
 /** Layout public : lien d'évitement, en-tête, contenu principal, pied de page */
 export function PublicLayout() {
   const { pathname } = useLocation()
+  const contenu = useRef<HTMLElement>(null)
+
+  useLayoutEffect(() => {
+    // L'accueil et la liste des actualités restaurent leur propre position au retour.
+    if (!matchPath('/', pathname) && !matchPath('/actualites', pathname)) {
+      window.scrollTo({ top: 0, behavior: 'instant' })
+    }
+  }, [pathname])
 
   // Au changement de page, replacer le focus et la lecture en haut du contenu
   useEffect(() => {
-    const main = document.getElementById('contenu-principal')
-    main?.focus({ preventScroll: true })
+    contenu.current?.focus({ preventScroll: true })
   }, [pathname])
 
   return (
     <div className="flex min-h-screen flex-col bg-sand">
-      <a href="#contenu-principal" className="skip-link">
-        Aller au contenu principal
-      </a>
+      <SkipLink cible="contenu-principal" />
       <SiteHeader />
-      <main id="contenu-principal" tabIndex={-1} className="flex-1 outline-none">
+      <main id="contenu-principal" ref={contenu} tabIndex={-1} className="flex-1 scroll-mt-20 outline-none">
         <Outlet />
       </main>
       <SiteFooter />

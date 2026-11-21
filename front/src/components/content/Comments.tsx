@@ -1,23 +1,20 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
-import { MessageCircle, Pencil, Reply, Trash2 } from 'lucide-react'
+import { Link, useLocation } from 'react-router-dom'
+import { MessageCircle, Pencil, Reply, Shield, Trash2 } from 'lucide-react'
 import type { Comment } from '../../types'
 import {
   addComment,
-  db,
+  currentUser,
   deleteCommentByAuthor,
   editComment,
-  fullName,
-  session,
   useDb,
-  useDbVersion,
 } from '../../lib/db'
-import { commentThreads } from '../../lib/selectors'
+import { commentThreads, getUser, visibleComments } from '../../lib/selectors'
 import { formatDateTime } from '../../lib/format'
-import { Button, Field, Textarea } from '../ui/form'
+import { Button, Field, Textarea, buttonClasses, focusChampInvalide } from '../ui/form'
 import { ConfirmDialog } from '../ui/overlay'
 import { Alert, EmptyState } from '../ui/feedback'
-import { CommentAvatar } from '../ui/misc'
+import { Avatar, CommentAvatar } from '../ui/misc'
 import { useToast } from '../../hooks/useToast'
 
 /** Met en évidence les mentions @Prénom N. dans un commentaire (§28) */
@@ -36,27 +33,31 @@ function avecMentions(texte: string): React.ReactNode {
 
 export function CommentsSection({ articleId }: { articleId: string }) {
   useDb()
-  const version = useDbVersion() // recomputé à chaque mutation du grain
-  void version
-  const user = session.current ? db.users.find((u) => u.id === session.current!.userId) ?? null : null
+  const compte = currentUser()
+  const user = compte?.statut === 'actif' ? compte : null
   const threads = commentThreads(articleId)
-  const nbTotal = threads.reduce((n, t) => n + 1 + t.replies.length, 0)
+  const nbTotal = visibleComments(articleId).length
 
   return (
-    <section id="commentaires" aria-labelledby="titre-commentaires" className="mt-12">
+    <section id="commentaires" aria-labelledby="titre-commentaires" className="mt-8 sm:mt-10">
       <h2 id="titre-commentaires" className="flex items-center gap-3 text-2xl text-forest">
         <MessageCircle aria-hidden="true" className="h-7 w-7" />
         Commentaires ({nbTotal})
       </h2>
       <p className="mt-2 text-mist">
-        Les commentaires sont publiés immédiatement et visibles par tous. Les discussions ne
-        comportent qu'un seul niveau de réponse : pour répondre à une réponse, mentionnez son
-        auteur avec son @prénom.
+        Les commentaires sont publics. Pour réagir à une réponse, répondez au commentaire
+        initial en mentionnant son auteur, par exemple @Marie D.
       </p>
 
-      <CommentForm articleId={articleId} parentId={null} user={user} />
+      {compte?.statut === 'suspendu' ? (
+        <div className="mt-4">
+          <Alert kind="attention" title="Compte suspendu">Vous pouvez lire les commentaires publics.</Alert>
+        </div>
+      ) : (
+        <CommentForm articleId={articleId} parentId={null} user={user} />
+      )}
 
-      <div className="mt-8 flex flex-col gap-6">
+      <div className="mt-5 flex flex-col gap-4">
         {threads.length === 0 ? (
           <EmptyState
             icon={MessageCircle}
@@ -88,12 +89,12 @@ function CommentThreadView({
   user: { id: string; prenom: string; nom: string } | null
 }) {
   return (
-    <article className="rounded-2xl border border-line bg-white p-6">
+    <article className="rounded-2xl border border-line bg-white p-3 sm:p-5">
       <CommentView comment={comment} user={user} />
       {replies.length > 0 ? (
-        <ul className="mt-4 flex flex-col gap-4 border-l-2 border-leaf-pale pl-5" aria-label={`Réponses au commentaire de ${comment.auteurLabel}`}>
+        <ul className="mt-3 grid gap-3 border-l-2 border-leaf/40 pl-2 sm:pl-4" aria-label="Réponses à ce commentaire">
           {replies.map((r) => (
-            <li key={r.id}>
+            <li key={r.id} className="rounded-xl bg-sand p-2.5 sm:p-3">
               <CommentView comment={r} user={user} dansReponse />
             </li>
           ))}
@@ -117,60 +118,71 @@ function CommentView({
   const [reponseOuverte, setReponseOuverte] = useState(false)
   const [aSupprimer, setASupprimer] = useState(false)
 
-  const supprime = comment.deletedByAuthor || comment.moderation
+  // Le placeholder ne reprend ni le nom, ni l'avatar, ni les dates du commentaire retiré.
+  if (comment.deletedByAuthor || comment.moderation) {
+    const Icone = comment.moderation ? Shield : Trash2
+    return (
+      <div
+        id={`commentaire-${comment.id}`}
+        tabIndex={-1}
+        className={`flex scroll-mt-24 items-center gap-2 rounded-lg px-3 py-2 text-sm ${comment.moderation ? 'bg-ocre-pale text-ocre-dark' : 'bg-sand-dark text-mist'}`}
+      >
+        <Icone aria-hidden="true" className="h-4 w-4 shrink-0" />
+        <p><strong>Commentaire supprimé</strong> · {comment.moderation ? 'Par la modération' : 'Par son auteur'}</p>
+      </div>
+    )
+  }
+
+  const auteur = getUser(comment.auteurId)
+  const nomPublic = auteur ? `${auteur.prenom} ${auteur.nom.charAt(0)}.` : 'Utilisateur supprimé'
   const estAuteur = user && comment.auteurId === user.id
 
   return (
-    <div id={`commentaire-${comment.id}`} className="scroll-mt-24">
-      <div className="flex items-start gap-4">
-        <CommentAvatar label={comment.auteurLabel} size={dansReponse ? 'sm' : 'md'} />
+    <div id={`commentaire-${comment.id}`} tabIndex={-1} className="scroll-mt-24 [overflow-wrap:anywhere]">
+      <div className="flex items-start gap-2 sm:gap-3">
+        {auteur ? <Avatar user={auteur} size="sm" /> : <CommentAvatar label={nomPublic} size="sm" />}
         <div className="min-w-0 flex-1">
           <p className="font-bold">
-            {supprime ? (
-              <span className="text-mist">Commentaire supprimé</span>
-            ) : user && comment.auteurId ? (
+            {user && auteur ? (
               <Link
-                to={`/profil/${comment.auteurId}`}
+                to={`/profil/${auteur.id}`}
                 className="rounded-md underline decoration-2 underline-offset-4 hover:text-forest"
               >
-                {comment.auteurLabel}
+                {nomPublic}
               </Link>
             ) : (
-              <span>{comment.auteurLabel}</span>
+              <span>{nomPublic}</span>
             )}
-            {comment.auteurId === null && !supprime ? (
-              <span className="ml-2 text-[0.8125rem] font-normal text-mist">
-                (compte supprimé)
-              </span>
-            ) : null}
           </p>
           <p className="text-[0.875rem] text-mist">
             <time dateTime={comment.createdAt}>le {formatDateTime(comment.createdAt)}</time>
             {comment.updatedAt ? (
-              <span className="ml-1"> — Modifié le {formatDateTime(comment.updatedAt)}</span>
+              <span className="ml-2 inline-block rounded-md bg-leaf-pale px-2 font-bold text-forest">
+                Modifié le <time dateTime={comment.updatedAt}>{formatDateTime(comment.updatedAt)}</time>
+              </span>
             ) : null}
           </p>
 
-          {supprime ? (
-            <p className="mt-2 rounded-xl bg-sand-dark px-4 py-3 text-mist italic">
-              Commentaire supprimé. Les réponses restent visibles pour préserver la discussion.
-            </p>
-          ) : modifOuverte ? (
+          {modifOuverte ? (
             <EditCommentForm
               comment={comment}
-              onDone={() => setModifOuverte(false)}
+              onDone={() => {
+                setModifOuverte(false)
+                document.getElementById(`modifier-${comment.id}`)?.focus()
+              }}
             />
           ) : (
-            <p className="mt-2 whitespace-pre-line text-[1.0625rem] leading-relaxed">
+            <p className="mt-2 whitespace-pre-line text-base leading-relaxed sm:text-[1.0625rem]">
               {avecMentions(comment.contenu)}
             </p>
           )}
 
-          {!supprime && user ? (
-            <div className="mt-3 flex flex-wrap gap-2">
+          {user ? (
+            <div className="mt-2 flex flex-wrap gap-x-2 text-sm">
               {estAuteur ? (
                 <>
                   <button
+                    id={`modifier-${comment.id}`}
                     type="button"
                     onClick={() => setModifOuverte(true)}
                     className="inline-flex min-h-[44px] items-center gap-2 rounded-lg px-3 font-bold text-forest underline decoration-2 underline-offset-4 hover:bg-leaf-pale"
@@ -190,10 +202,12 @@ function CommentView({
               ) : null}
               {!dansReponse ? (
                 <button
+                  id={`repondre-${comment.id}`}
                   type="button"
                   onClick={() => setReponseOuverte((o) => !o)}
                   className="inline-flex min-h-[44px] items-center gap-2 rounded-lg px-3 font-bold text-forest underline decoration-2 underline-offset-4 hover:bg-leaf-pale"
                   aria-expanded={reponseOuverte}
+                  aria-controls={reponseOuverte ? `reponse-${comment.id}` : undefined}
                 >
                   <Reply aria-hidden="true" className="h-4 w-4" />
                   Répondre
@@ -207,7 +221,10 @@ function CommentView({
               articleId={comment.articleId}
               parentId={comment.id}
               user={user}
-              onDone={() => setReponseOuverte(false)}
+              onDone={() => {
+                setReponseOuverte(false)
+                document.getElementById(`repondre-${comment.id}`)?.focus()
+              }}
             />
           ) : null}
         </div>
@@ -219,7 +236,8 @@ function CommentView({
         onConfirm={() => {
           deleteCommentByAuthor(comment.id)
           setASupprimer(false)
-          toast('Votre commentaire a été supprimé. Il est remplacé par la mention « Commentaire supprimé » dans la discussion.', 'info')
+          requestAnimationFrame(() => document.getElementById(`commentaire-${comment.id}`)?.focus())
+          toast('Commentaire supprimé.', 'info')
         }}
         title="Supprimer votre commentaire ?"
         confirmLabel="Supprimer mon commentaire"
@@ -246,10 +264,11 @@ function EditCommentForm({ comment, onDone }: { comment: Comment; onDone: () => 
         e.preventDefault()
         if (!contenu.trim()) {
           setErreur('Le contenu du commentaire ne peut pas être vide.')
+          focusChampInvalide(e.currentTarget)
           return
         }
         editComment(comment.id, contenu)
-        toast('Votre commentaire a été modifié. La date de dernière modification est enregistrée.')
+        toast('Commentaire modifié.')
         onDone()
       }}
     >
@@ -258,7 +277,6 @@ function EditCommentForm({ comment, onDone }: { comment: Comment; onDone: () => 
         htmlFor={`modif-${comment.id}`}
         required
         error={erreur}
-        hint="Vous pouvez modifier votre commentaire sans limite de temps. La mention « Modifié le… » sera affichée publiquement."
       >
         <Textarea
           id={`modif-${comment.id}`}
@@ -269,10 +287,10 @@ function EditCommentForm({ comment, onDone }: { comment: Comment; onDone: () => 
           }}
           invalid={!!erreur}
           describedBy={erreur ? `modif-${comment.id}-err` : undefined}
-          aria-label="Nouveau contenu du commentaire"
+          autoFocus
         />
       </Field>
-      <div className="flex gap-3">
+      <div className="flex flex-wrap gap-2">
         <Button type="submit">Enregistrer la modification</Button>
         <Button variant="blanc" onClick={onDone}>
           Annuler
@@ -294,23 +312,23 @@ function CommentForm({
   onDone?: () => void
 }) {
   const { toast } = useToast()
+  const { pathname, search, hash } = useLocation()
   const [contenu, setContenu] = useState('')
   const [erreur, setErreur] = useState('')
   const [envoye, setEnvoye] = useState(false)
 
   if (!user) {
     return (
-      <div className="mt-6 rounded-2xl border border-dashed border-line bg-white p-6">
+      <div className="mt-4 rounded-2xl border border-dashed border-line bg-white p-4 sm:p-5">
         <p className="font-bold">Participer à la discussion</p>
         <p className="mt-1">
-          Seuls les utilisateurs connectés peuvent publier des commentaires. Les commentaires sont
-          visibles de tous.
+          Connectez-vous pour publier un commentaire.
         </p>
         <div className="mt-4 flex flex-wrap gap-3">
-          <Link to="/connexion" className={buttonLink}>
+          <Link to="/connexion" state={{ from: `${pathname}${search}${hash}` }} className={buttonClasses()}>
             Se connecter
           </Link>
-          <Link to="/inscription" className={buttonLinkSecondaire}>
+          <Link to="/inscription" className={buttonClasses('secondaire')}>
             Créer un compte
           </Link>
         </div>
@@ -318,42 +336,30 @@ function CommentForm({
     )
   }
 
-  const parent = parentId ? db.comments.find((c) => c.id === parentId) : null
+  const champ = `texte-commentaire-${parentId ?? 'nouveau'}`
 
   return (
     <form
-      className="mt-6 rounded-2xl border border-line bg-white p-6"
+      id={parentId ? `reponse-${parentId}` : undefined}
+      className="mt-4 rounded-xl border border-line bg-white p-3 sm:p-5"
       onSubmit={(e) => {
         e.preventDefault()
         if (!contenu.trim()) {
           setErreur('Veuillez écrire votre commentaire avant de l\'envoyer.')
+          focusChampInvalide(e.currentTarget)
           return
         }
         addComment(articleId, user.id, contenu, parentId)
         setContenu('')
         setEnvoye(true)
         setErreur('')
-        toast('Votre commentaire a été publié. Il est visible immédiatement.')
+        if (parentId) toast('Votre réponse a été publiée.')
         onDone?.()
       }}
     >
       <h3 className="text-xl">
         {parentId ? 'Votre réponse' : 'Écrire un commentaire'}
       </h3>
-      {parent ? (
-        <p className="mt-1 text-[0.9375rem] text-mist">
-          Réponse au commentaire de {parent.auteurLabel}.{' '}
-          {parent.parentId ? (
-            <span>
-              Les réponses ne peuvent pas recevoir d'autres réponses : pour répondre à une réponse,
-              publiez un nouveau commentaire en mentionnant son auteur, par exemple{' '}
-              <strong>
-                @{parent.auteurLabel.split(' ')[0]} {parent.auteurLabel.split(' ')[1]?.charAt(0) ?? ''}.
-              </strong>
-            </span>
-          ) : null}
-        </p>
-      ) : null}
       {envoye ? (
         <div className="mt-3">
           <Alert kind="succes" title="Commentaire publié">
@@ -364,24 +370,25 @@ function CommentForm({
       <div className="mt-4">
         <Field
           label={parentId ? 'Votre réponse' : 'Votre commentaire'}
-          htmlFor={`commentaire-${parentId ?? 'nouveau'}`}
+          htmlFor={champ}
           required
           error={erreur}
         >
           <Textarea
-            id={`commentaire-${parentId ?? 'nouveau'}`}
+            id={champ}
             value={contenu}
             onChange={(e) => {
               setContenu(e.target.value)
               setErreur('')
             }}
             invalid={!!erreur}
-            describedBy={erreur ? `commentaire-${parentId ?? 'nouveau'}-err` : undefined}
+            describedBy={erreur ? `${champ}-err` : undefined}
+            autoFocus={Boolean(parentId)}
             placeholder="Partagez votre expérience, votre question ou votre conseil…"
           />
         </Field>
       </div>
-      <div className="mt-4 flex gap-3">
+      <div className="mt-4 flex flex-wrap gap-2">
         <Button type="submit">{parentId ? 'Publier ma réponse' : 'Publier mon commentaire'}</Button>
         {onDone ? (
           <Button variant="blanc" onClick={onDone}>
@@ -393,7 +400,3 @@ function CommentForm({
   )
 }
 
-const buttonLink =
-  'inline-flex min-h-[48px] items-center rounded-xl bg-forest px-6 font-bold text-white hover:bg-forest-dark'
-const buttonLinkSecondaire =
-  'inline-flex min-h-[48px] items-center rounded-xl border border-forest bg-white px-6 font-bold text-forest hover:bg-leaf-pale'

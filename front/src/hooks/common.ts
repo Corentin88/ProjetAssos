@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useLocation, useNavigationType } from 'react-router-dom'
 
 /** État de chargement simulé pour présenter les squelettes (maquette) */
 export function useFakeLoad(delay = 500): boolean {
@@ -20,21 +20,23 @@ const scrollMemory = new Map<string, number>()
 
 export function useScrollMemory(key: string): void {
   const location = useLocation()
+  const navigation = useNavigationType()
   const cle = `${key}${location.pathname}${location.search}`
-  const saved = useRef<number>(0)
-  useEffect(() => {
-    saved.current = scrollMemory.get(cle) ?? 0
-    if (saved.current) {
-      requestAnimationFrame(() => window.scrollTo(0, saved.current))
-    } else {
-      window.scrollTo(0, 0)
+  const dejaMontee = useRef(false)
+  useLayoutEffect(() => {
+    // La saisie et la normalisation remplacent l'URL sur place, sans déplacer le champ actif.
+    const remplacementSurPlace = navigation === 'REPLACE' && dejaMontee.current
+    if (!remplacementSurPlace) {
+      window.scrollTo({ top: scrollMemory.get(cle) ?? 0, behavior: 'instant' })
     }
+    dejaMontee.current = true
     const onScroll = () => {
       scrollMemory.set(cle, window.scrollY)
     }
+    onScroll()
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
-  }, [cle])
+  }, [cle, navigation])
 }
 
 export function clearScrollMemory(key?: string): void {
