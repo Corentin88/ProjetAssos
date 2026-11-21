@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { SkipLink } from '../ui/nav'
+import { CommandesAffichage, useAffichage } from './Affichage'
 import {
   FileText,
   Home,
@@ -136,6 +137,7 @@ export function AdminLayout() {
   const { pathname } = useLocation()
   const { toast } = useToast()
   const drawer = useRef<HTMLDialogElement>(null)
+  const { navigationCompacte } = useAffichage()
   const [resetOuvert, setResetOuvert] = useState(false)
   const sessionUser = session.current
     ? db.users.find((u) => u.id === session.current!.userId) ?? null
@@ -168,33 +170,36 @@ export function AdminLayout() {
       <SkipLink cible="contenu-admin" />
 
       {/* Barre supérieure mobile */}
-      <div className="focus-inverse sticky top-0 z-40 flex items-center justify-between gap-3 bg-forest-dark px-4 py-3 text-white lg:hidden">
+      <div className={`focus-inverse sticky top-0 z-40 flex min-h-[72px] items-center justify-between gap-1 bg-forest-dark px-2 py-2 text-white sm:gap-3 sm:px-4 ${navigationCompacte ? 'lg:static' : 'lg:hidden'}`}>
         <button
           type="button"
           onClick={openDrawer}
-          className="inline-flex min-h-[48px] items-center gap-2 rounded-xl bg-white/10 px-4 font-bold"
+          className="inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center gap-2 rounded-xl bg-white/10 font-bold sm:px-2"
           aria-haspopup="dialog"
         >
           <Menu aria-hidden="true" className="h-6 w-6" />
-          Menu
+          <span className="sr-only sm:not-sr-only">Menu</span>
         </button>
-        <Link to="/admin" className="flex items-center gap-2 rounded-lg py-1 font-bold">
-          <img src={FAVICON} alt="" className="h-9 w-9 rounded-lg" />
-          Administration
+        <Link to="/admin" className="flex min-w-0 items-center gap-2 rounded-lg py-1 font-bold">
+          <img src={FAVICON} alt="" className="h-9 w-9 shrink-0 rounded-lg" />
+          <span className="sr-only sm:not-sr-only">Administration</span>
         </Link>
-        <Link
-          to="/"
-          className="inline-flex min-h-[48px] items-center gap-2 rounded-xl bg-white/10 px-3 font-bold"
-        >
-          <Home aria-hidden="true" className="h-5 w-5" />
-          <span className="sr-only">Retour au site public</span>
-          Site
-        </Link>
+        <div className="flex shrink-0 items-center gap-1">
+          <Link
+            to="/"
+            className="inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center gap-2 rounded-xl bg-white/10 font-bold sm:px-2"
+          >
+            <Home aria-hidden="true" className="h-5 w-5 shrink-0" />
+            <span className="sr-only">Retour au site public</span>
+            <span aria-hidden="true" className="hidden sm:inline">Site</span>
+          </Link>
+          <CommandesAffichage />
+        </div>
       </div>
 
       <div className="flex flex-1">
         {/* Sidebar desktop */}
-        <aside className="hidden w-80 shrink-0 flex-col bg-forest-dark p-5 lg:flex">
+        <aside className={`hidden w-80 shrink-0 flex-col bg-forest-dark p-5 ${navigationCompacte ? '' : 'lg:flex'}`}>
           <Link to="/admin" className="flex items-center gap-3 rounded-xl p-2 hover:bg-white/10">
             <img src={FAVICON} alt="" className="h-11 w-11 rounded-xl" />
             <span className="leading-tight text-white">
@@ -202,6 +207,7 @@ export function AdminLayout() {
               <span className="block text-[0.875rem] text-white/70">Espace d'administration</span>
             </span>
           </Link>
+          <div className="focus-inverse mt-3 px-2"><CommandesAffichage /></div>
           <div className="my-5 border-t border-white/15" aria-hidden="true" />
           <div className="scrollzone flex-1 overflow-y-auto">
             <AdminNav />
@@ -301,7 +307,7 @@ export function AdminLayout() {
         </dialog>
 
         {/* Contenu */}
-        <main id="contenu-admin" tabIndex={-1} className="min-w-0 flex-1 scroll-mt-20 outline-none lg:scroll-mt-0">
+        <main id="contenu-admin" tabIndex={-1} className={`min-w-0 flex-1 scroll-mt-20 outline-none ${navigationCompacte ? '' : 'lg:scroll-mt-0'}`}>
           <Outlet />
         </main>
       </div>

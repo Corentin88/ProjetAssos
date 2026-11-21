@@ -66,21 +66,15 @@ export function ArticleCard({ article }: { article: Article }) {
   }
 
   return (
-    <article className="carte carte-hover group flex h-full min-w-0 flex-col overflow-hidden">
-      {/* Zone visuelle standardisée : image + badges superposés (§22, §25) */}
-      <div className="relative aspect-video w-full shrink-0 overflow-hidden bg-forest-dark">
-        <Link
-          to={lienArticle}
-          state={navigationArticle}
-          className="absolute inset-0 block overflow-hidden"
-          tabIndex={-1}
-          aria-hidden="true"
-        >
+    <article className="carte-hover h-full min-w-0">
+      <div className="carte carte-article-surface relative isolate flex h-full min-w-0 flex-col overflow-hidden">
+        {/* Zone visuelle standardisée : image + badges superposés (§22, §25) */}
+        <div className="relative aspect-video w-full shrink-0 overflow-hidden bg-forest-dark">
           {cover ? (
             <img
               src={mediaUrl(cover.file)}
               alt=""
-              className="h-full w-full object-cover motion-safe:transition-transform motion-safe:duration-300 motion-safe:group-hover:scale-[1.04]"
+              className="carte-article-image h-full w-full object-cover"
               loading="lazy"
             />
           ) : (
@@ -88,90 +82,88 @@ export function ArticleCard({ article }: { article: Article }) {
               <Newspaper aria-hidden="true" className="h-14 w-14 text-white/20" />
             </span>
           )}
-        </Link>
 
-        {/* Badge de catégorie, haut à gauche, toujours lisible */}
-        {categorie ? (
-          <Link
-            to={lienFiltre('cat', categorie.id)}
-            className="absolute left-3 top-3 z-10 inline-flex min-h-8 max-w-[calc(100%-1.5rem)] items-center rounded-full bg-white px-3 text-sm font-bold text-forest shadow-sm hover:bg-leaf-pale hover:underline"
-            title={categorie.nom}
-          >
-            <span className="truncate">{categorie.nom}</span>
-            <span className="sr-only"> — filtrer les actualités par cette catégorie</span>
-          </Link>
-        ) : null}
+          {/* Badge de catégorie, haut à gauche, toujours lisible */}
+          {categorie ? (
+            <Link
+              to={lienFiltre('cat', categorie.id)}
+              className="carte-article-badge absolute left-3 top-3 z-10 inline-flex min-h-8 max-w-[calc(100%-1.5rem)] items-center rounded-full bg-white px-3 text-sm font-bold text-forest shadow-sm hover:bg-leaf-pale hover:underline"
+              title={categorie.nom}
+            >
+              <span className="truncate">{categorie.nom}</span>
+              <span className="sr-only"> — filtrer les actualités par cette catégorie</span>
+            </Link>
+          ) : null}
 
-        {/* Tags superposés en bas de l'image, cliquables */}
-        {tags.length > 0 ? (
-          <ul
-            className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex items-center gap-1.5"
-            aria-label="Tags de l'article"
-          >
-            {tagsVisibles.map((t) => (
-              <li key={t.id} className="min-w-0">
-                <Link
-                  to={lienFiltre('tag', t.id)}
-                  className="pointer-events-auto flex min-h-8 items-center rounded-full bg-bark px-2.5 text-xs font-bold text-white hover:bg-forest-dark hover:underline"
-                  title={`#${t.nom}`}
-                >
-                  <span className="truncate">#{t.nom}</span>
-                  <span className="sr-only"> — filtrer par ce tag</span>
-                </Link>
-              </li>
-            ))}
-            {tagsRestants > 0 ? (
-              <li className="pointer-events-auto shrink-0">
-                <span
-                  className="inline-flex min-h-8 items-center rounded-full bg-bark px-2.5 text-xs font-bold text-white"
-                  title={tags.slice(MAX_TAGS_CARTE).map((t) => `#${t.nom}`).join(', ')}
-                >
-                  <span aria-hidden="true">+{tagsRestants}</span>
-                  <span className="sr-only">
-                    {tagsRestants} {tagsRestants === 1 ? 'tag supplémentaire' : 'tags supplémentaires'}
+          {/* Tags superposés en bas de l'image, cliquables */}
+          {tags.length > 0 ? (
+            <ul
+              className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex items-center gap-1.5"
+              aria-label="Tags de l'article"
+            >
+              {tagsVisibles.map((t) => (
+                <li key={t.id} className="min-w-0">
+                  <Link
+                    to={lienFiltre('tag', t.id)}
+                    className="carte-article-badge pointer-events-auto flex min-h-8 items-center rounded-full bg-bark px-2.5 text-xs font-bold text-white hover:bg-forest-dark hover:underline"
+                    title={`#${t.nom}`}
+                  >
+                    <span className="truncate">#{t.nom}</span>
+                    <span className="sr-only"> — filtrer par ce tag</span>
+                  </Link>
+                </li>
+              ))}
+              {tagsRestants > 0 ? (
+                <li className="pointer-events-auto shrink-0">
+                  <span
+                    className="inline-flex min-h-8 items-center rounded-full bg-bark px-2.5 text-xs font-bold text-white"
+                    title={tags.slice(MAX_TAGS_CARTE).map((t) => `#${t.nom}`).join(', ')}
+                  >
+                    <span aria-hidden="true">+{tagsRestants}</span>
+                    <span className="sr-only">
+                      {tagsRestants} {tagsRestants === 1 ? 'tag supplémentaire' : 'tags supplémentaires'}
+                    </span>
                   </span>
-                </span>
-              </li>
-            ) : null}
-          </ul>
-        ) : null}
-      </div>
+                </li>
+              ) : null}
+            </ul>
+          ) : null}
+        </div>
 
-      <div className="flex flex-1 flex-col gap-2 p-4 [overflow-wrap:anywhere] sm:p-5">
-        <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.8125rem] text-mist">
-          <span className="inline-flex items-center gap-1.5">
-            <CalendarDays aria-hidden="true" className="h-4 w-4" />
-            <time dateTime={article.publishedAt ?? article.updatedAt}>
-              {formatDate(article.publishedAt ?? article.updatedAt)}
-            </time>
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <User aria-hidden="true" className="h-4 w-4" />
-            {articleAuthorLabel(article)}
-          </span>
-        </p>
-        <h3 className="text-lg leading-snug sm:text-xl">
-          <Link
-            to={lienArticle}
-            state={navigationArticle}
-            className="rounded-md text-bark underline-offset-4 hover:text-forest hover:underline"
-          >
-            {article.titre}
-          </Link>
-        </h3>
-        <p className="line-clamp-3 text-[0.9375rem] leading-relaxed text-bark/90">
-          {extrait(article)}
-        </p>
-        <p className="mt-auto pt-1">
-          <Link
-            to={lienArticle}
-            state={navigationArticle}
-            className="inline-flex min-h-[44px] items-center rounded-lg font-bold text-forest underline decoration-2 underline-offset-4 hover:bg-leaf-pale"
-          >
-            Lire l'article
-            <span className="sr-only"> : {article.titre}</span>
-          </Link>
-        </p>
+        <div className="flex flex-1 flex-col gap-2 p-4 [overflow-wrap:anywhere] sm:p-5">
+          <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.8125rem] text-mist">
+            <span className="inline-flex items-center gap-1.5">
+              <CalendarDays aria-hidden="true" className="h-4 w-4" />
+              <time dateTime={article.publishedAt ?? article.updatedAt}>
+                {formatDate(article.publishedAt ?? article.updatedAt)}
+              </time>
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <User aria-hidden="true" className="h-4 w-4" />
+              {articleAuthorLabel(article)}
+            </span>
+          </p>
+          <h3 className="text-lg leading-snug sm:text-xl">
+            <Link
+              to={lienArticle}
+              state={navigationArticle}
+              className="carte-article-lien rounded-md text-bark underline-offset-4 hover:text-forest hover:underline"
+            >
+              {article.titre}
+            </Link>
+          </h3>
+          <p className="line-clamp-3 text-[0.9375rem] leading-relaxed text-bark/90">
+            {extrait(article)}
+          </p>
+          <p className="mt-auto pt-1">
+            <span
+              aria-hidden="true"
+              className="inline-flex min-h-[44px] items-center rounded-lg font-bold text-forest underline decoration-2 underline-offset-4"
+            >
+              Lire l'article
+            </span>
+          </p>
+        </div>
       </div>
     </article>
   )

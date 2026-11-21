@@ -6,8 +6,7 @@ import { articleAuthorLabel, articleCoverMediaId, getMedia, publicBlocks } from 
 import { formatDate } from '../../lib/format'
 import { mediaUrl } from '../../lib/assets'
 import { Button, buttonClasses } from '../ui/form'
-
-const REDUCTION_MOUVEMENT = '(prefers-reduced-motion: reduce)'
+import { useAffichage } from '../layout/Affichage'
 
 /** Carrousel d'articles mis en avant (§26) — accessibilité RGAA :
  *  contrôles explicites, pause possible, autoplay respecte
@@ -15,20 +14,14 @@ const REDUCTION_MOUVEMENT = '(prefers-reduced-motion: reduce)'
 export function ArticleCarousel({ articles }: { articles: Article[] }) {
   const [index, setIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
-  const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia(REDUCTION_MOUVEMENT).matches)
+  const { reduireAnimations } = useAffichage()
   const total = articles.length
-  const rotation = playing && !reducedMotion && total > 1
+  const rotation = playing && !reduireAnimations && total > 1
 
-  // Autoplay désactivé si l'utilisateur préfère réduire les animations
+  // Une réduction activée en cours de lecture arrête aussi la rotation du carrousel.
   useEffect(() => {
-    const preference = window.matchMedia(REDUCTION_MOUVEMENT)
-    const actualiser = (event: MediaQueryListEvent) => {
-      setReducedMotion(event.matches)
-      if (event.matches) setPlaying(false)
-    }
-    preference.addEventListener('change', actualiser)
-    return () => preference.removeEventListener('change', actualiser)
-  }, [])
+    if (reduireAnimations) setPlaying(false)
+  }, [reduireAnimations])
 
   useEffect(() => {
     if (!rotation) return
@@ -106,7 +99,7 @@ export function ArticleCarousel({ articles }: { articles: Article[] }) {
               <span className="sr-only sm:not-sr-only">Suivant</span>
               <ChevronRight aria-hidden="true" className="h-5 w-5" />
             </Button>
-            {!reducedMotion ? (
+            {!reduireAnimations ? (
               <Button
                 variant="secondaire"
                 size="petit"

@@ -7,9 +7,10 @@ import { asset } from '../../lib/assets'
 import { buttonClasses } from '../ui/form'
 import { Avatar } from '../ui/misc'
 import { LIENS_PUBLICS } from './siteNavigation'
+import { CommandesAffichage, useAffichage } from './Affichage'
 
 const FAVICON = asset('favicon.svg')
-const ECRAN_LARGE = '(min-width: 64rem)'
+const ECRAN_LARGE = '(min-width: 80rem)'
 
 function lienClasse({ isActive }: { isActive: boolean }): string {
   return `inline-flex min-h-11 items-center gap-2 rounded-lg px-3 text-base font-bold transition-colors ${
@@ -22,6 +23,7 @@ export function SiteHeader() {
   const navigate = useNavigate()
   const { key } = useLocation()
   const dialogMobile = useRef<HTMLDialogElement>(null)
+  const { navigationCompacte } = useAffichage()
   const utilisateur = currentUser()
   const compteAccessible = utilisateur?.statut === 'actif'
   const unread = compteAccessible ? unreadNotificationCount(utilisateur.id) : 0
@@ -36,11 +38,11 @@ export function SiteHeader() {
   useEffect(() => {
     const ecran = window.matchMedia(ECRAN_LARGE)
     const fermerSurGrandEcran = (event: MediaQueryListEvent) => {
-      if (event.matches) dialogMobile.current?.close()
+      if (event.matches && !navigationCompacte) dialogMobile.current?.close()
     }
     ecran.addEventListener('change', fermerSurGrandEcran)
     return () => ecran.removeEventListener('change', fermerSurGrandEcran)
-  }, [])
+  }, [navigationCompacte])
 
   const onDeconnexion = () => {
     closeMenu()
@@ -114,26 +116,29 @@ export function SiteHeader() {
         </Link>
 
         {/* Navigation desktop */}
-        <nav aria-label="Navigation principale" className="hidden shrink-0 items-center gap-0.5 lg:flex">
+        <nav aria-label="Navigation principale" className={`hidden shrink-0 items-center gap-0.5 ${navigationCompacte ? '' : 'xl:flex'}`}>
           {liensPublics()}
         </nav>
 
         {/* Actions de session (desktop) */}
-        <nav aria-label="Compte et session" className="hidden shrink-0 items-center gap-1 lg:flex">
+        <nav aria-label="Compte et session" className={`hidden shrink-0 items-center gap-1 ${navigationCompacte ? '' : 'xl:flex'}`}>
           {liensSession()}
         </nav>
 
-        {/* Bouton menu mobile */}
-        <button
-          type="button"
-          onClick={() => dialogMobile.current?.showModal()}
-          className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-line bg-white px-3 text-base font-bold text-forest hover:bg-sand lg:hidden"
-          aria-haspopup="dialog"
-          aria-controls="menu-site"
-        >
-          <Menu aria-hidden="true" className="h-5 w-5" />
-          Menu
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          <CommandesAffichage />
+          {/* Bouton menu mobile */}
+          <button
+            type="button"
+            onClick={() => dialogMobile.current?.showModal()}
+            className={`inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center gap-2 rounded-xl border border-line bg-white px-2 text-base font-bold text-forest hover:bg-sand ${navigationCompacte ? '' : 'xl:hidden'}`}
+            aria-haspopup="dialog"
+            aria-controls="menu-site"
+          >
+            <Menu aria-hidden="true" className="h-5 w-5 shrink-0" />
+            <span className="sr-only sm:not-sr-only">Menu</span>
+          </button>
+        </div>
       </div>
 
       {/* Menu mobile : fenêtre de dialogue accessible */}

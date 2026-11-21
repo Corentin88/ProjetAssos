@@ -2,6 +2,11 @@ import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAt
 import { forwardRef } from 'react'
 import { TriangleAlert } from 'lucide-react'
 
+export function focusChampInvalide(formulaire: HTMLFormElement) {
+  // Attendre que React relie le champ à son message avant de lui donner le focus.
+  requestAnimationFrame(() => formulaire.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus())
+}
+
 // ============================================================
 // Boutons — 48 px de haut minimum (brief : ergonomie seniors)
 // ============================================================
@@ -48,7 +53,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 // Champs de formulaire
 // ============================================================
 const inputBase =
-  'w-full rounded-xl border bg-white px-4 py-3 text-[1.0625rem] text-bark placeholder:text-mist/70 min-h-[48px]'
+  'w-full rounded-xl border bg-white px-4 py-3 text-[1.0625rem] text-bark placeholder:text-mist min-h-[48px]'
 
 export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   invalid?: boolean
@@ -64,7 +69,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
       ref={ref}
       aria-invalid={invalid || undefined}
       aria-describedby={describedBy}
-      className={`${inputBase} ${invalid ? 'border-brique focus:border-brique' : 'border-line focus:border-forest'} ${className}`}
+      className={`${inputBase} ${invalid ? 'border-brique focus:border-brique' : 'border-controle focus:border-forest'} ${className}`}
       {...rest}
     />
   )
@@ -85,7 +90,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
       rows={rows}
       aria-invalid={invalid || undefined}
       aria-describedby={describedBy}
-      className={`${inputBase} ${invalid ? 'border-brique focus:border-brique' : 'border-line focus:border-forest'} ${className}`}
+      className={`${inputBase} ${invalid ? 'border-brique focus:border-brique' : 'border-controle focus:border-forest'} ${className}`}
       {...rest}
     />
   )
@@ -105,7 +110,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
       ref={ref}
       aria-invalid={invalid || undefined}
       aria-describedby={describedBy}
-      className={`${inputBase} ${invalid ? 'border-brique' : 'border-line focus:border-forest'} ${className}`}
+      className={`${inputBase} ${invalid ? 'border-brique' : 'border-controle focus:border-forest'} ${className}`}
       {...rest}
     >
       {children}

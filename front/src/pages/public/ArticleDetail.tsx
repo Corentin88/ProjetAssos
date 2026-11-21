@@ -1,6 +1,7 @@
+import { useEffect } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { ArrowLeft, CalendarDays, Eye, PencilLine, Tag, User } from 'lucide-react'
-import { useDb } from '../../lib/db'
+import { ArrowLeft, CalendarDays, Eye, MessageCircle, PencilLine, User } from 'lucide-react'
+import { currentUser, useDb } from '../../lib/db'
 import {
   articleAuthorLabel,
   articleCoverMediaId,
@@ -14,18 +15,28 @@ import { formatDate, formatDateTime, formatNombre } from '../../lib/format'
 import { mediaUrl } from '../../lib/assets'
 import { BlockRenderer } from '../../components/content/BlockRenderer'
 import { CommentsSection } from '../../components/content/Comments'
-import { ArticleStatutBadge } from '../../components/content/ArticleCard'
 import { Alert, ErrorState } from '../../components/ui/feedback'
 import { Breadcrumb } from '../../components/ui/nav'
 import { CategoryChip, TagChip } from '../../components/ui/misc'
-import { session } from '../../lib/db'
+import { buttonClasses } from '../../components/ui/form'
 
 /** Détail d'un article publié (§17) + commentaires (§28) */
 export function ArticleDetail() {
   const db = useDb()
   const { slug } = useParams()
   const location = useLocation()
-  const article = db.articles.find((a) => a.slug === slug && (a.statut === 'publie' || a.publicSnapshot))
+  const article = db.articles.find((a) => a.slug === slug && a.statut === 'publie')
+
+  useEffect(() => {
+    if (!article || !/^#commentaire-[\w-]+$/.test(location.hash)) return
+    // Le routeur conserve l'ancre d'un commentaire dans son propre fragment.
+    const frame = requestAnimationFrame(() => {
+      const commentaire = document.getElementById(location.hash.slice(1))
+      commentaire?.focus({ preventScroll: true })
+      commentaire?.scrollIntoView({ block: 'start', behavior: 'instant' })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [article, location.hash])
 
   /** URL de la liste d'origine (critères, tri, pagination) transmise par les
    *  cartes d'articles : « Retour à la liste » ne perd aucun critère (§25) */
@@ -54,12 +65,13 @@ export function ArticleDetail() {
   const coverId = articleCoverMediaId(article)
   const cover = getMedia(coverId)
   const auteur = db.users.find((u) => u.id === article.auteurId)
-  const sessionUser = session.current ? db.users.find((u) => u.id === session.current!.userId) : null
+  const sessionUser = currentUser()
+  const compteActif = sessionUser?.statut === 'actif'
   const nbCommentaires = visibleComments(article.id).length
 
   // Liens des tags/catégories préservent les filtres vers la liste
   return (
-    <article className="mx-auto max-w-4xl px-4 py-8">
+    <article className="mx-auto max-w-4xl px-4 py-6 [overflow-wrap:anywhere] sm:py-8">
       <Breadcrumb
         items={[
           { label: 'Accueil', to: '/' },
@@ -69,9 +81,9 @@ export function ArticleDetail() {
       />
 
       {/* Statut de l'article pour les admins (version publiée / en préparation) */}
-      {sessionUser?.role === 'administrateur' ? (
+      {compteActif && sessionUser.role === 'administrateur' ? (
         <div className="mt-4">
-          <Alert kind="info" title={`Cet article est : ${article.statut === 'publie' ? 'Publié' : 'En cours de préparation (brouillon de nouvelle version)'}`}>
+          <Alert kind="info" title={article.publicSnapshot ? 'Article publié · Version en préparation' : 'Article publié'}>
             {article.publicSnapshot ? (
               <p>
                 Une nouvelle version est en préparation dans l'administration. La version affichée
@@ -97,7 +109,7 @@ export function ArticleDetail() {
           <span className="inline-flex items-center gap-1.5">
             <User aria-hidden="true" className="h-4 w-4" />
             {auteur ? (
-              sessionUser ? (
+              compteActif ? (
                 <Link to={`/profil/${auteur.id}`} className="font-bold underline underline-offset-4 hover:text-forest">
                   {articleAuthorLabel(article)}
                 </Link>
@@ -115,21 +127,20 @@ export function ArticleDetail() {
               {formatDate(article.publishedAt ?? article.updatedAt)}
             </time>
           </span>
-          {article.publicSnapshot ? null : (
+          {!article.publicSnapshot && article.updatedAt !== article.publishedAt ? (
             <span className="inline-flex items-center gap-1.5">
               <PencilLine aria-hidden="true" className="h-4 w-4" />
               Modifié le {formatDateTime(article.updatedAt)}
             </span>
-          )}
+          ) : null}
           <span className="inline-flex items-center gap-1.5">
             <Eye aria-hidden="true" className="h-4 w-4" />
             {formatNombre(article.viewCount)} vues
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <Tag aria-hidden="true" className="h-4 w-4" />
-            {nbCommentaires} commentaire{nbCommentaires > 1 ? 's' : ''}
+            <MessageCircle aria-hidden="true" className="h-4 w-4" />
+            {nbCommentaires} {nbCommentaires === 1 ? 'commentaire' : 'commentaires'}
           </span>
-          <ArticleStatutBadge statut={article.statut} />
         </div>
       </header>
 
@@ -137,11 +148,11 @@ export function ArticleDetail() {
         <img
           src={mediaUrl(cover.file)}
           alt={cover.alt}
-          className="mt-6 aspect-[16/8] w-full rounded-2xl border border-line object-cover"
+          className="mt-5 aspect-video w-full rounded-2xl border border-line object-cover sm:aspect-[2/1]"
         />
       ) : null}
 
-      <div className="mt-8 rounded-2xl border border-line bg-white p-6 md:p-10">
+      <div className="mt-5 rounded-2xl border border-line bg-white p-4 sm:p-7 md:p-9">
         <BlockRenderer blocks={publicBlocks(article)} />
         <div className="mt-8 border-t border-line pt-6">
           <h2 className="text-lg">Catégories et tags de l'article</h2>
@@ -171,7 +182,7 @@ export function ArticleDetail() {
       <p className="mt-10">
         <Link
           to={retourArticle}
-          className="inline-flex min-h-[48px] items-center gap-2 rounded-xl border border-forest bg-white px-6 font-bold text-forest hover:bg-leaf-pale"
+          className={buttonClasses('secondaire')}
         >
           <ArrowLeft aria-hidden="true" className="h-5 w-5" />
           {depuisAccueil ? 'Retour à l’accueil' : 'Retour à la liste des actualités'}
