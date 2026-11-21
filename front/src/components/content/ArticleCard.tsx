@@ -50,12 +50,11 @@ export function ArticleCard({ article }: { article: Article }) {
   const tagsRestants = tags.length - tagsVisibles.length
   const lienArticle = `/actualites/${article.slug}`
 
-  /** Depuis la liste des actualités, on mémorise l'URL de la liste (critères,
-   *  tri, pagination) dans l'état de navigation : le lien « Retour à la
-   *  liste » de l'article la réutilisera (§25). */
+  /** Le détail mémorise la page d'origine, y compris les critères de la liste (§25). */
   const location = useLocation()
   const depuisListe = Boolean(useMatch('/actualites'))
-  const retourListe = depuisListe ? `${location.pathname}${location.search}` : undefined
+  const origine = depuisListe || location.pathname === '/' ? `${location.pathname}${location.search}` : undefined
+  const navigationArticle = origine ? { from: origine } : undefined
 
   const lienFiltre = (critere: 'cat' | 'tag', id: string) => {
     // Depuis les résultats, le badge remplace seulement son critère et repart à la première page.
@@ -72,7 +71,7 @@ export function ArticleCard({ article }: { article: Article }) {
       <div className="relative aspect-video w-full shrink-0 overflow-hidden bg-forest-dark">
         <Link
           to={lienArticle}
-          state={retourListe ? { from: retourListe } : undefined}
+          state={navigationArticle}
           className="absolute inset-0 block overflow-hidden"
           tabIndex={-1}
           aria-hidden="true"
@@ -154,7 +153,7 @@ export function ArticleCard({ article }: { article: Article }) {
         <h3 className="text-lg leading-snug sm:text-xl">
           <Link
             to={lienArticle}
-            state={retourListe ? { from: retourListe } : undefined}
+            state={navigationArticle}
             className="rounded-md text-bark underline-offset-4 hover:text-forest hover:underline"
           >
             {article.titre}
@@ -166,7 +165,7 @@ export function ArticleCard({ article }: { article: Article }) {
         <p className="mt-auto pt-1">
           <Link
             to={lienArticle}
-            state={retourListe ? { from: retourListe } : undefined}
+            state={navigationArticle}
             className="inline-flex min-h-[44px] items-center rounded-lg font-bold text-forest underline decoration-2 underline-offset-4 hover:bg-leaf-pale"
           >
             Lire l'article

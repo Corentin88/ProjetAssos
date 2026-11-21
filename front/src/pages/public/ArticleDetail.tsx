@@ -1,4 +1,3 @@
-import { useLayoutEffect } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { ArrowLeft, CalendarDays, Eye, PencilLine, Tag, User } from 'lucide-react'
 import { useDb } from '../../lib/db'
@@ -28,13 +27,12 @@ export function ArticleDetail() {
   const location = useLocation()
   const article = db.articles.find((a) => a.slug === slug && (a.statut === 'publie' || a.publicSnapshot))
 
-  useLayoutEffect(() => {
-    window.scrollTo({ top: 0, behavior: 'instant' })
-  }, [slug])
-
   /** URL de la liste d'origine (critères, tri, pagination) transmise par les
    *  cartes d'articles : « Retour à la liste » ne perd aucun critère (§25) */
-  const retourListe = (location.state?.from as string | undefined) ?? '/actualites'
+  const origine = location.state?.from as string | undefined
+  const depuisAccueil = origine === '/' || origine?.startsWith('/?')
+  const retourArticle = origine ?? '/actualites'
+  const retourListe = depuisAccueil ? '/actualites' : retourArticle
 
   if (!article) {
     return (
@@ -44,9 +42,9 @@ export function ArticleDetail() {
           description="Cet article n'existe pas ou n'est plus publié. Il a peut-être été retiré du site ou placé dans la corbeille."
         />
         <p className="mt-6 text-center">
-          <Link to={retourListe} className="inline-flex min-h-[48px] items-center rounded-xl bg-forest px-6 font-bold text-white hover:bg-forest-dark">
+          <Link to={retourArticle} className="inline-flex min-h-[48px] items-center rounded-xl bg-forest px-6 font-bold text-white hover:bg-forest-dark">
             <ArrowLeft aria-hidden="true" className="mr-2 h-5 w-5" />
-            Retour aux actualités
+            {depuisAccueil ? 'Retour à l’accueil' : 'Retour aux actualités'}
           </Link>
         </p>
       </div>
@@ -172,11 +170,11 @@ export function ArticleDetail() {
 
       <p className="mt-10">
         <Link
-          to={retourListe}
+          to={retourArticle}
           className="inline-flex min-h-[48px] items-center gap-2 rounded-xl border border-forest bg-white px-6 font-bold text-forest hover:bg-leaf-pale"
         >
           <ArrowLeft aria-hidden="true" className="h-5 w-5" />
-          Retour à la liste des actualités
+          {depuisAccueil ? 'Retour à l’accueil' : 'Retour à la liste des actualités'}
         </Link>
       </p>
     </article>

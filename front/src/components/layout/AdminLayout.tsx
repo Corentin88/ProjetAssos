@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { SkipLink } from '../ui/nav'
 import {
   FileText,
   Home,
@@ -132,6 +133,7 @@ function AdminNav({ onNavigate }: { onNavigate?: () => void }) {
 export function AdminLayout() {
   useDb()
   const navigate = useNavigate()
+  const { pathname } = useLocation()
   const { toast } = useToast()
   const drawer = useRef<HTMLDialogElement>(null)
   const [resetOuvert, setResetOuvert] = useState(false)
@@ -141,9 +143,10 @@ export function AdminLayout() {
 
   // Focus du contenu principal à chaque navigation interne
   useEffect(() => {
-    const main = document.getElementById('contenu-admin')
-    main?.focus({ preventScroll: true })
-  })
+    drawer.current?.close()
+    document.getElementById('contenu-admin')?.focus({ preventScroll: true })
+    window.scrollTo({ top: 0, behavior: 'instant' })
+  }, [pathname])
 
   const openDrawer = () => drawer.current?.showModal()
   const closeDrawer = () => drawer.current?.close()
@@ -162,9 +165,7 @@ export function AdminLayout() {
 
   return (
     <div className="flex min-h-screen flex-col bg-admin">
-      <a href="#contenu-admin" className="skip-link">
-        Aller au contenu principal
-      </a>
+      <SkipLink cible="contenu-admin" />
 
       {/* Barre supérieure mobile */}
       <div className="focus-inverse sticky top-0 z-40 flex items-center justify-between gap-3 bg-forest-dark px-4 py-3 text-white lg:hidden">
@@ -300,7 +301,7 @@ export function AdminLayout() {
         </dialog>
 
         {/* Contenu */}
-        <main id="contenu-admin" tabIndex={-1} className="min-w-0 flex-1 outline-none">
+        <main id="contenu-admin" tabIndex={-1} className="min-w-0 flex-1 scroll-mt-20 outline-none lg:scroll-mt-0">
           <Outlet />
         </main>
       </div>
