@@ -11,7 +11,8 @@ import { AffichageProvider } from './components/layout/Affichage'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <HashRouter>
+    {/* Le champ de recherche suit l’URL et doit rester synchronisé à chaque frappe. */}
+    <HashRouter useTransitions={false}>
       <AffichageProvider>
         <App />
       </AffichageProvider>
