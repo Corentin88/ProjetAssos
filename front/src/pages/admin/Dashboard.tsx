@@ -1,5 +1,5 @@
 import { useCurrentUser } from '../../lib/auth'
-import { Link } from 'react-router-dom'
+import { Link, useOutletContext } from 'react-router-dom'
 import {
   ArrowRight,
   CalendarClock,
@@ -15,6 +15,9 @@ import {
 import { db, fullName, useDb } from '../../lib/db'
 import { useFakeLoad } from '../../hooks/common'
 import { Skeleton, SkeletonText } from '../../components/ui/feedback'
+import type { AdminMessagesContext } from '../../components/layout/AdminLayout'
+import type { Comment } from '../../types'
+import { useResource } from '../../lib/community'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
 import { Badge } from '../../components/ui/feedback'
 import { ArticleStatutBadge } from '../../components/content/ArticleCard'
@@ -32,9 +35,11 @@ export function Dashboard() {
   const programmes = db.articles.filter((a) => a.statut === 'programme').length
   const brouillons = db.articles.filter((a) => a.statut === 'brouillon').length
   const corbeille = db.articles.filter((a) => a.statut === 'corbeille').length
-  const messagesNonLus = db.messages.filter((m) => !m.lu).length
+  const { data: messages } = useOutletContext<AdminMessagesContext>()
+  const messagesNonLus = messages?.filter((m) => !m.lu).length ?? 0
   const nbUtilisateurs = db.users.length
-  const nbCommentaires = db.comments.length
+  const { data: commentaires } = useResource<Comment[]>('/admin/comments', true)
+  const nbCommentaires = commentaires?.length ?? 0
   const medias = db.medias.length
 
   const aTraiter: { titre: string; texte: string; lien: string; lienLabel: string; urgence: boolean }[] = []

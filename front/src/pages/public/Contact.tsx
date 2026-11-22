@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { Clock, Facebook, Instagram, Mail, MapPin, Phone, Send, Youtube } from 'lucide-react'
-import type { Coordonnees } from '../../types'
-import { addContactMessage, useDb } from '../../lib/db'
+import type { AssociationPage as AssociationData, Coordonnees } from '../../types'
+import { sendContact, useResource } from '../../lib/community'
+import { authErrorMessage } from '../../lib/auth'
 import { BlockRenderer } from '../../components/content/BlockRenderer'
 import { Button, Checkbox, Field, Input, Select, Textarea, buttonClasses, focusChampInvalide } from '../../components/ui/form'
 import { Alert, EmptyState } from '../../components/ui/feedback'
@@ -24,9 +25,11 @@ const CLASSE_LIEN = 'rounded text-forest underline underline-offset-4 [overflow-
 
 /** Formulaire de contact (§35) : prénom, nom, e-mail, sujet, message et honeypot. */
 export function Contact() {
-  const { association } = useDb()
+  const { data: association, error: erreurAssociation } = useResource<AssociationData>('/association')
   const { values, errors, set, setFieldErrors, reset } = useForm(CONTACT_VIDE)
   const [envoye, setEnvoye] = useState(false)
+  const [enCours, setEnCours] = useState(false)
+  const [erreurEnvoi, setErreurEnvoi] = useState('')
   const confirmation = useRef<HTMLDivElement>(null)
   const prenom = useRef<HTMLInputElement>(null)
 
@@ -34,15 +37,10 @@ export function Contact() {
     if (envoye) confirmation.current?.focus()
   }, [envoye])
 
-  const soumettre = (e: FormEvent<HTMLFormElement>) => {
+  const soumettre = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    // Le champ piège affiche la même confirmation qu'une soumission valide sans enregistrer de message.
-    if (new FormData(e.currentTarget).get('site_web')) {
-      reset()
-      setEnvoye(true)
-      return
-    }
-
+    if (enCours) return
+    const site_web = String(new FormData(e.currentTarget).get('site_web') ?? '')
     const erreurs: Record<string, string> = {}
     if (!values.prenom.trim()) erreurs.prenom = 'Veuillez saisir votre prénom.'
     if (!values.nom.trim()) erreurs.nom = 'Veuillez saisir votre nom.'
@@ -58,13 +56,13 @@ export function Contact() {
       return
     }
 
-    addContactMessage({
-      prenom: values.prenom.trim(),
-      nom: values.nom.trim(),
-      email: values.email.trim(),
-      sujet: values.sujet,
-      message: values.message.trim(),
-    })
+    setEnCours(true)
+    setErreurEnvoi('')
+    try {
+      await sendContact({ prenom: values.prenom.trim(), nom: values.nom.trim(), email: values.email.trim(),
+        sujet: values.sujet, message: values.message.trim(), site_web, consentement: true })
+    } catch (error) { setErreurEnvoi(authErrorMessage(error)); return }
+    finally { setEnCours(false) }
     reset()
     setEnvoye(true)
   }
@@ -78,7 +76,7 @@ export function Contact() {
           {envoye ? (
             <div ref={confirmation} tabIndex={-1} className="mt-4 scroll-mt-24 space-y-4">
               <Alert kind="succes" title="Message enregistré">
-                Votre message est disponible dans l’administration de cette maquette.
+                Votre message a été transmis à l’association.
               </Alert>
               <div className="flex flex-wrap gap-3">
                 <Button
@@ -100,6 +98,7 @@ export function Contact() {
               className="carte mt-4 flex flex-col gap-4 p-4 sm:gap-5 sm:p-6"
               aria-labelledby="titre-formulaire-contact"
             >
+              {erreurEnvoi && <Alert kind="erreur" title="Envoi impossible">{erreurEnvoi}</Alert>}
               {/* Honeypot (§35), retiré de la navigation clavier et de l’arbre d’accessibilité. */}
               <div aria-hidden="true" className="absolute h-0 w-0 overflow-hidden opacity-0">
                 <label htmlFor="site-web">Ne pas remplir ce champ</label>
@@ -184,7 +183,7 @@ export function Contact() {
                 ) : null}
               </div>
               <div>
-                <Button type="submit">
+                <Button type="submit" disabled={enCours}>
                   <Send aria-hidden="true" className="h-5 w-5" />
                   Envoyer le message
                 </Button>
@@ -192,7 +191,8 @@ export function Contact() {
             </form>
           )}
         </section>
-        <CoordonneesAssociation coordonnees={association.coordonnees} />
+        {erreurAssociation ? <Alert kind="erreur" title="Coordonnées indisponibles">{erreurAssociation}</Alert>
+          : association && <CoordonneesAssociation coordonnees={association.coordonnees} />}
       </div>
     </>
   )
@@ -200,20 +200,21 @@ export function Contact() {
 
 // Page « L'association » rendue depuis le contenu administrable (§32, §33).
 export function AssociationPage() {
-  const { association } = useDb()
+  const { data: association, error: erreurAssociation } = useResource<AssociationData>('/association')
 
   return (
     <>
       <PageHead titre="L’association" sousTitre="L’histoire, les valeurs et les activités du Foyer Rural d’Arches." />
       <div className="mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:py-8 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:gap-8">
-        {association.blocks.length ? (
+        {erreurAssociation ? <Alert kind="erreur" title="Présentation indisponible">{erreurAssociation}</Alert>
+          : !association ? <p role="status">Chargement…</p> : association.blocks.length ? (
           <article aria-label="Présentation de l’association" className="carte [overflow-wrap:anywhere] p-4 sm:p-7 lg:p-8">
             <BlockRenderer blocks={association.blocks} />
           </article>
         ) : (
           <EmptyState title="La présentation sera bientôt disponible" />
         )}
-        <CoordonneesAssociation coordonnees={association.coordonnees} lienContact />
+        {association && <CoordonneesAssociation coordonnees={association.coordonnees} lienContact />}
       </div>
     </>
   )

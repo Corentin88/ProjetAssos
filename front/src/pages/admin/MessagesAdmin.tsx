@@ -1,12 +1,13 @@
-import { useCurrentUser } from '../../lib/auth'
+import { ApiError, authErrorMessage, protectedRequest } from '../../lib/auth'
+import { useOutletContext } from 'react-router-dom'
+import type { AdminMessagesContext } from '../../components/layout/AdminLayout'
 import { useMemo, useState } from 'react'
 import { CheckCheck, Mail, MailOpen, Reply, Trash2 } from 'lucide-react'
 import type { ContactMessage } from '../../types'
-import { db, deleteMessage, markMessage, replyToMessage, useDb, useDbVersion } from '../../lib/db'
 import { formatDateTime } from '../../lib/format'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
 import { Avatar } from '../../components/ui/misc'
-import { Badge, EmptyState } from '../../components/ui/feedback'
+import { Alert, Badge, EmptyState } from '../../components/ui/feedback'
 import { Button, Field, Textarea } from '../../components/ui/form'
 import { ConfirmDialog, Modal } from '../../components/ui/overlay'
 import { useToast } from '../../hooks/useToast'
@@ -14,11 +15,9 @@ import { useToast } from '../../hooks/useToast'
 /** Messages reçus via le formulaire de contact (§35) : consultation,
  *  statut lu/non lu, réponse par courriel, suppression */
 export function MessagesAdmin() {
-  useDb()
-  const version = useDbVersion()
+  const { data, error, refresh } = useOutletContext<AdminMessagesContext>()
   const { toast } = useToast()
-  const admin = useCurrentUser()
-  const adminId = admin?.id ?? 'u1'
+  const [envoiEnCours, setEnvoiEnCours] = useState(false)
 
   const [filtre, setFiltre] = useState<'tous' | 'non-lus' | 'lus'>('tous')
   const [ouvert, setOuvert] = useState<ContactMessage | null>(null)
@@ -27,13 +26,17 @@ export function MessagesAdmin() {
   const [aSupprimer, setASupprimer] = useState<ContactMessage | null>(null)
 
   const messages = useMemo(() => {
-    let list = [...db.messages].sort((a, b) => b.at.localeCompare(a.at))
+    let list = [...(data ?? [])].sort((a, b) => b.at.localeCompare(a.at))
     if (filtre === 'non-lus') list = list.filter((m) => !m.lu)
     if (filtre === 'lus') list = list.filter((m) => m.lu)
     return list
-  }, [version, filtre])
+  }, [data, filtre])
 
-  const nonLus = db.messages.filter((m) => !m.lu).length
+  const nonLus = data?.filter((m) => !m.lu).length ?? 0
+  const markMessage = async (id: string, lu: boolean) => {
+    try { await protectedRequest(`/admin/contact/${id}/read`, 'PATCH', { lu }); await refresh() }
+    catch (error) { toast(authErrorMessage(error), 'erreur') }
+  }
 
   return (
     <>
@@ -44,10 +47,9 @@ export function MessagesAdmin() {
         <Button
           variant="secondaire"
           disabled={nonLus === 0}
-          onClick={() => {
-            db.messages.forEach((m) => {
-              if (!m.lu) markMessage(m.id, true)
-            })
+          onClick={async () => {
+            try { await protectedRequest('/admin/contact/read', 'PATCH'); await refresh() }
+            catch (error) { toast(authErrorMessage(error), 'erreur'); return }
             toast('Tous les messages sont marqués comme lus.')
           }}
         >
@@ -79,7 +81,7 @@ export function MessagesAdmin() {
           ))}
         </div>
 
-        {messages.length === 0 ? (
+        {error ? <Alert kind="erreur" title="Messages indisponibles">{error}</Alert> : !data ? <p role="status">Chargement…</p> : messages.length === 0 ? (
           <div className="mt-6">
             <EmptyState
               icon={filtre === 'non-lus' ? MailOpen : Mail}
@@ -166,16 +168,23 @@ export function MessagesAdmin() {
               Fermer
             </Button>
             <Button
-              onClick={() => {
-                if (!ouvert) return
+              disabled={envoiEnCours}
+              onClick={async () => {
+                if (!ouvert || envoiEnCours) return
                 if (!reponse.trim()) {
                   setErreurReponse('Veuillez écrire la réponse avant de l\'envoyer.')
                   return
                 }
-                replyToMessage(ouvert.id, adminId)
-                toast(
-                  `Réponse enregistrée (simulation de l'envoi par courriel à ${ouvert.email}). L'action est inscrite au journal d'activité.`,
-                )
+                setEnvoiEnCours(true)
+                try {
+                  await protectedRequest(`/admin/contact/${ouvert.id}/reply`, 'POST', { message: reponse })
+                  await refresh()
+                } catch (error) {
+                  setErreurReponse(error instanceof ApiError && error.status === 503
+                    ? 'Envoi indisponible. Vérifiez la configuration SMTP.' : authErrorMessage(error))
+                  return
+                } finally { setEnvoiEnCours(false) }
+                toast('Réponse envoyée par courriel.')
                 setOuvert(null)
               }}
             >
@@ -219,12 +228,6 @@ export function MessagesAdmin() {
                 describedBy={erreurReponse ? 'reponse-message-err' : undefined}
               />
             </Field>
-            <p className="rounded-xl bg-ocre-pale px-4 py-3 text-[0.9375rem] text-ocre-dark">
-              <strong>Simulation :</strong> dans cette maquette, l'envoi de courriel n'est pas
-              implémenté. En cliquant sur « Envoyer la réponse », la réponse est enregistrée et
-              le message est marqué comme répondu ; en production, elle serait transmise par
-              courriel à {ouvert.email}.
-            </p>
           </div>
         ) : null}
       </Modal>
@@ -232,9 +235,10 @@ export function MessagesAdmin() {
       <ConfirmDialog
         open={!!aSupprimer}
         onClose={() => setASupprimer(null)}
-        onConfirm={() => {
+        onConfirm={async () => {
           if (aSupprimer) {
-            deleteMessage(aSupprimer.id, adminId)
+            try { await protectedRequest(`/admin/contact/${aSupprimer.id}`, 'DELETE'); await refresh() }
+            catch (error) { toast(authErrorMessage(error), 'erreur'); return }
             toast('Message supprimé.', 'info')
           }
           setASupprimer(null)

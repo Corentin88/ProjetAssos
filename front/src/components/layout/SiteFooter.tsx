@@ -1,7 +1,8 @@
 import { useCurrentUser } from '../../lib/auth'
 import { Link, NavLink } from 'react-router-dom'
 import { Facebook, Instagram, Mail, MapPin, Phone } from 'lucide-react'
-import { useDb } from '../../lib/db'
+import { useResource } from '../../lib/community'
+import type { AssociationPage } from '../../types'
 import { asset } from '../../lib/assets'
 import { LIENS_PUBLICS } from './siteNavigation'
 
@@ -14,8 +15,8 @@ function lienActif({ isActive }: { isActive: boolean }) {
 
 /** Pied de page collé en bas de l'écran (flex + mt-auto sur le layout) */
 export function SiteFooter() {
-  const db = useDb()
-  const c = db.association.coordonnees
+  const { data } = useResource<AssociationPage>('/association')
+  const c = data?.coordonnees
   const utilisateur = useCurrentUser()
 
   return (
@@ -26,14 +27,14 @@ export function SiteFooter() {
             <img src={FAVICON} alt="" className="h-10 w-10 rounded-lg" />
             Foyer Rural d'Arches
           </h2>
-          <ul className="mt-4 space-y-2 text-base text-white/85">
-            <li className="flex items-start gap-2">
+          {c && <ul className="mt-4 space-y-2 text-base text-white/85">
+            {(c.adresse || c.ville) && <li className="flex items-start gap-2">
               <MapPin aria-hidden="true" className="mt-1 h-5 w-5 shrink-0" />
               <span>
                 {c.adresse}, {c.codePostal} {c.ville}
               </span>
-            </li>
-            <li className="flex items-start gap-2">
+            </li>}
+            {c.telephone && <li className="flex items-start gap-2">
               <Phone aria-hidden="true" className="mt-1 h-5 w-5 shrink-0" />
               <a
                 href={`tel:${c.telephone.replace(/\s/g, '')}`}
@@ -41,8 +42,8 @@ export function SiteFooter() {
               >
                 {c.telephone}
               </a>
-            </li>
-            <li className="flex items-start gap-2">
+            </li>}
+            {c.email && <li className="flex items-start gap-2">
               <Mail aria-hidden="true" className="mt-1 h-5 w-5 shrink-0" />
               <a
                 href={`mailto:${c.email}`}
@@ -50,8 +51,8 @@ export function SiteFooter() {
               >
                 {c.email}
               </a>
-            </li>
-          </ul>
+            </li>}
+          </ul>}
         </section>
 
         <nav aria-labelledby="footer-nav">
@@ -89,6 +90,7 @@ export function SiteFooter() {
             <li><NavLink className={lienActif} to="/confidentialite">Politique de confidentialité</NavLink></li>
             <li><NavLink className={lienActif} to="/accessibilite">Accessibilité : conformité RGAA</NavLink></li>
           </ul>
+          {c && (c.facebook || c.instagram || c.youtube) && <>
           <h3 className="mt-4 text-base font-bold">Suivez-nous</h3>
           <ul className="mt-2 flex flex-wrap gap-2 text-base">
             {c.facebook ? (
@@ -130,6 +132,7 @@ export function SiteFooter() {
               </li>
             ) : null}
           </ul>
+          </>}
         </section>
       </div>
       <div className="border-t border-white/20 px-4 py-3 text-center text-[0.9375rem] text-white/75">

@@ -16,6 +16,7 @@ import type { Principal } from '../auth/session.service.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { MediaDto } from './content.dto.js';
 import { contentLog, lockAdmin } from './content.shared.js';
+import { gpxLibrary, gpxPath } from './trails.js';
 
 const library = {
   type: 'IMAGE',
@@ -26,9 +27,11 @@ const published = {
   article: { status: 'PUBLISHED' },
 } satisfies Prisma.ArticleVersionWhereInput;
 const publiclyUsed = {
+  // Les blocs de la page Association sont directement publiés à l’enregistrement.
   OR: [
     { articleCovers: { some: published } },
     { articleBlocks: { some: { version: published } } },
+    { associationBlocks: { some: {} } },
   ],
 } satisfies Prisma.MediaWhereInput;
 const formats = {
@@ -192,7 +195,7 @@ export class MediaService {
   async delete(actor: Principal, id: string) {
     const path = await this.prisma.$transaction(async (tx) => {
       await lockAdmin(tx, this.sessions, actor);
-      const item = await this.lock(tx, id);
+      const item = await this.lock(tx, id, true);
       const usage = await tx.media.findUniqueOrThrow({
         where: { id },
         select: {
@@ -216,16 +219,16 @@ export class MediaService {
         'MEDIA',
         id,
         'DELETE',
-        'Image supprimée.',
+        item.type === 'GPX' ? 'Fichier GPX supprimé.' : 'Image supprimée.',
       );
       return item.path;
     });
     await this.remove(path);
   }
 
-  private async lock(tx: Prisma.TransactionClient, id: string) {
+  private async lock(tx: Prisma.TransactionClient, id: string, includeGpx = false) {
     await tx.$queryRaw`SELECT id FROM media WHERE id = ${id}::uuid FOR UPDATE`;
-    const item = await tx.media.findFirst({ where: { ...library, id } });
+    const item = await tx.media.findFirst({ where: { id, OR: includeGpx ? [library, gpxLibrary] : [library] } });
     if (!item) throw new NotFoundException();
     return item;
   }
@@ -240,10 +243,10 @@ export class MediaService {
 
   private async remove(path: string) {
     try {
-      await unlink(this.resolve(path));
+      await unlink(path.startsWith('trails/') ? gpxPath(path) : this.resolve(path));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
-        this.logger.warn('Un fichier image doit être purgé.');
+        this.logger.warn('Un fichier média doit être purgé.');
     }
   }
 

@@ -18,6 +18,8 @@ import {
   Users,
   X,
 } from 'lucide-react'
+import type { ContactMessage } from '../../types'
+import { useResource } from '../../lib/community'
 import { db, resetDemoData, useDb } from '../../lib/db'
 import { authErrorMessage, logout, useCurrentUser } from '../../lib/auth'
 import { asset } from '../../lib/assets'
@@ -76,10 +78,9 @@ function lienClasse({ isActive }: { isActive: boolean }): string {
 
 /** Compteurs d'éléments à traiter affichés sur les rubriques concernées
  *  (productivité : repérer d'un coup d'œil ce qui attend une action) */
-function compteurLien(to: string): { valeur: number; urgence: boolean } | null {
+function compteurLien(to: string, messagesNonLus: number): { valeur: number; urgence: boolean } | null {
   if (to === '/admin/messages') {
-    const n = db.messages.filter((m) => !m.lu).length
-    return n > 0 ? { valeur: n, urgence: true } : null
+    return messagesNonLus > 0 ? { valeur: messagesNonLus, urgence: true } : null
   }
   if (to === '/admin/articles') {
     const n = db.articles.filter((a) => a.statut === 'corbeille').length
@@ -88,7 +89,7 @@ function compteurLien(to: string): { valeur: number; urgence: boolean } | null {
   return null
 }
 
-function AdminNav({ onNavigate }: { onNavigate?: () => void }) {
+function AdminNav({ onNavigate, messagesNonLus }: { onNavigate?: () => void; messagesNonLus: number }) {
   return (
     <nav aria-label="Navigation de l'administration" className="flex flex-col gap-5">
       {GROUPES.map((g) => (
@@ -101,7 +102,7 @@ function AdminNav({ onNavigate }: { onNavigate?: () => void }) {
           </h2>
           <ul className="flex flex-col gap-1">
             {g.liens.map((l) => {
-              const compteur = compteurLien(l.to)
+              const compteur = compteurLien(l.to, messagesNonLus)
               return (
                 <li key={l.to}>
                   <NavLink to={l.to} end={l.fin} className={lienClasse} onClick={onNavigate}>
@@ -132,6 +133,8 @@ function AdminNav({ onNavigate }: { onNavigate?: () => void }) {
 
 /** Layout de l'administration : identité visuelle distincte du site public
  *  (colonne latérale sombre, fond instrumental) mais mêmes couleurs de marque. */
+export type AdminMessagesContext = ReturnType<typeof useResource<ContactMessage[]>>
+
 export function AdminLayout() {
   useDb()
   const navigate = useNavigate()
@@ -141,6 +144,8 @@ export function AdminLayout() {
   const { navigationCompacte } = useAffichage()
   const [resetOuvert, setResetOuvert] = useState(false)
   const sessionUser = useCurrentUser()
+  const messages = useResource<ContactMessage[]>(sessionUser?.role === 'administrateur' && sessionUser.statut === 'actif' ? '/admin/contact' : undefined, true)
+  const messagesNonLus = messages.data?.filter(m => !m.lu).length ?? 0
 
   // Focus du contenu principal à chaque navigation interne
   useEffect(() => {
@@ -213,7 +218,7 @@ export function AdminLayout() {
           <div className="focus-inverse mt-3 px-2"><CommandesAffichage /></div>
           <div className="my-5 border-t border-white/15" aria-hidden="true" />
           <div className="scrollzone flex-1 overflow-y-auto">
-            <AdminNav />
+            <AdminNav messagesNonLus={messagesNonLus} />
           </div>
           <div className="mt-5 border-t border-white/15 pt-5">
             {sessionUser ? (
@@ -272,7 +277,7 @@ export function AdminLayout() {
               </button>
             </div>
             <div className="scrollzone flex-1 overflow-y-auto p-4">
-              <AdminNav onNavigate={closeDrawer} />
+              <AdminNav onNavigate={closeDrawer} messagesNonLus={messagesNonLus} />
             </div>
             <div className="border-t border-white/15 p-4">
               <Link
@@ -311,7 +316,7 @@ export function AdminLayout() {
 
         {/* Contenu */}
         <main id="contenu-admin" tabIndex={-1} className={`min-w-0 flex-1 scroll-mt-20 outline-none ${navigationCompacte ? '' : 'lg:scroll-mt-0'}`}>
-          <Outlet />
+          <Outlet context={messages} />
         </main>
       </div>
 
@@ -324,8 +329,7 @@ export function AdminLayout() {
         confirmLabel="Réinitialiser les données"
       >
         <p>
-          Les modifications des modules de démonstration (commentaires, comptes, messages,
-          page de l'association…) seront <strong>définitivement perdues</strong>. Les données de
+          Les modifications des modules de démonstration seront <strong>définitivement perdues</strong>. Les données de
           démonstration d'origine seront rétablies. Votre session reste ouverte.
         </p>
       </ConfirmDialog>

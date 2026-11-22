@@ -1,23 +1,23 @@
 import { useEffect, useId, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft, MessageCircle } from 'lucide-react'
-import { useDb } from '../../lib/db'
 import { ApiError, getPublicProfile, useCurrentUser } from '../../lib/auth'
-import { getArticleById, getUser, userPublicComments } from '../../lib/selectors'
+import { useResource } from '../../lib/community'
+import type { Comment } from '../../types'
 import { formatDate, formatMoisAnnee } from '../../lib/format'
 import { Avatar } from '../../components/ui/misc'
-import { EmptyState, ErrorState } from '../../components/ui/feedback'
+import { Alert, EmptyState, ErrorState } from '../../components/ui/feedback'
 import { Button, buttonClasses } from '../../components/ui/form'
 import { Breadcrumb } from '../../components/ui/nav'
 import { RequireAuth } from '../../components/layout/guards'
 
 function ProfilPublicContenu({ tousLesCommentaires }: { tousLesCommentaires?: boolean }) {
-  useDb()
   const { id } = useParams()
   // L'identifiant « moi » pointe vers la session courante
   const sessionUser = useCurrentUser()
   const cibleId = id === 'moi' ? (sessionUser?.id ?? undefined) : id
   const idApi = cibleId && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(cibleId) ? cibleId : undefined
+  const commentairesApi = useResource<Comment[]>(idApi ? `/profiles/${idApi}/comments` : undefined, true)
   const [profil, setProfil] = useState<{
     id: string; data?: Awaited<ReturnType<typeof getPublicProfile>>; indisponible?: boolean
   }>()
@@ -31,7 +31,7 @@ function ProfilPublicContenu({ tousLesCommentaires }: { tousLesCommentaires?: bo
     })
     return () => { actif = false }
   }, [idApi, sessionUser?.id])
-  const cible = idApi ? (profil?.id === idApi ? profil.data : undefined) : getUser(cibleId ?? null)
+  const cible = idApi && profil?.id === idApi ? profil.data : undefined
 
   if (idApi && profil?.id !== idApi) {
     return <p className="mx-auto max-w-3xl px-4 py-16" role="status">Chargement du profil…</p>
@@ -48,8 +48,8 @@ function ProfilPublicContenu({ tousLesCommentaires }: { tousLesCommentaires?: bo
     )
   }
 
-  const commentairesPublics = userPublicComments(cible.id)
-  const nbCommentaires = idApi ? profil?.data?.commentCount ?? 0 : commentairesPublics.length
+  const commentairesPublics = commentairesApi.data ?? []
+  const nbCommentaires = cible.commentCount
   const commentaires = tousLesCommentaires ? commentairesPublics : commentairesPublics.slice(0, 5) // §15
 
   const prenom = cible.prenom
@@ -87,22 +87,23 @@ function ProfilPublicContenu({ tousLesCommentaires }: { tousLesCommentaires?: bo
           {tousLesCommentaires ? 'Tous ses commentaires publics' : 'Derniers commentaires publics'}
         </h2>
 
-        {commentaires.length === 0 ? (
+        {commentairesApi.error ? <Alert kind="erreur" title="Commentaires indisponibles">{commentairesApi.error}</Alert>
+          : !commentairesApi.data ? <p role="status">Chargement…</p> : commentaires.length === 0 ? (
           <div className="mt-4">
             <EmptyState icon={MessageCircle} title="Aucun commentaire public pour le moment" />
           </div>
         ) : (
           <ul className="mt-4 flex flex-col gap-4">
             {commentaires.map((c) => {
-              const article = getArticleById(c.articleId)
-              if (!article) return null
+              const slug = c.articleSlug
+              if (!slug) return null
               return (
                 <li key={c.id} className="carte p-4 sm:p-5">
                   <p className="mb-2 text-sm text-mist">
                     <time dateTime={c.createdAt}>{formatDate(c.createdAt)}</time>
                     {' · '}
-                    <Link to={`/actualites/${article.slug}#commentaire-${c.id}`} className="font-bold text-forest underline underline-offset-4">
-                      {article.titre}
+                    <Link to={`/actualites/${slug}#commentaire-${c.id}`} className="font-bold text-forest underline underline-offset-4">
+                      {c.articleTitre}
                     </Link>
                   </p>
                   <CommentaireApercu contenu={c.contenu} />

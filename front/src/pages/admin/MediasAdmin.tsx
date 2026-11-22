@@ -1,13 +1,14 @@
 import { ContentImage } from '../../components/content/ContentImage'
 import { useEffect, useMemo, useState } from 'react'
 import { Images, Import, Pencil, Search, Trash2 } from 'lucide-react'
-import type { Media } from '../../types'
+import type { GpxMedia, Media } from '../../types'
+import { useResource } from '../../lib/community'
 import { db, useDbVersion } from '../../lib/db'
 import { removeMedia, replaceMedia, saveMediaMetadata, uploadMedia, useContentAction } from '../../lib/content'
 import { formatDate, formatTaille } from '../../lib/format'
 import { mediaUrl } from '../../lib/assets'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
-import { Badge, EmptyState } from '../../components/ui/feedback'
+import { Alert, Badge, EmptyState } from '../../components/ui/feedback'
 import { Button, Field, Input, Textarea } from '../../components/ui/form'
 import { ConfirmDialog, Modal } from '../../components/ui/overlay'
 import { useToast } from '../../hooks/useToast'
@@ -152,6 +153,8 @@ export function MediasAdmin() {
         )}
       </div>
 
+      <GpxLibrary />
+
       <ImportMediaModal
         open={importOuvert}
         onClose={() => setImportOuvert(false)}
@@ -269,6 +272,40 @@ export function MediasAdmin() {
 }
 
 /** Fenêtre d'import : fichier réel (aperçu en session) ou visuel de démonstration */
+function GpxLibrary() {
+  const { data, error, refresh } = useResource<GpxMedia[]>('/admin/content/gpx', true)
+  const effectuer = useContentAction()
+  const { toast } = useToast()
+  const [selected, setSelected] = useState<GpxMedia | null>(null)
+  return (
+    <section aria-labelledby="titre-mediatheque-gpx" className="mx-auto max-w-6xl px-4 pb-8 md:px-8">
+      <h2 id="titre-mediatheque-gpx" className="text-xl text-forest">Fichiers GPX</h2>
+      {error ? <Alert kind="erreur" title="Fichiers GPX indisponibles">{error}</Alert>
+        : !data ? <p role="status">Chargement…</p>
+        : !data.length ? <p className="mt-2 text-mist">Aucun fichier GPX. Importez un fichier depuis l’éditeur d’article.</p>
+        : <ul className="mt-3 grid gap-2">{data.map(file => (
+          <li key={file.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-white p-3">
+            <div><p className="font-bold [overflow-wrap:anywhere]">{file.nom}</p>
+              <p className="text-sm text-mist">{formatTaille(file.tailleKo)} · {file.usages} parcours</p></div>
+            <Button size="petit" variant="danger" disabled={file.usages > 0} onClick={() => setSelected(file)}>
+              <Trash2 aria-hidden="true" className="h-4 w-4" /> Supprimer<span className="sr-only"> {file.nom}</span>
+            </Button>
+          </li>
+        ))}</ul>}
+      <ConfirmDialog open={Boolean(selected)} onClose={() => setSelected(null)} title="Supprimer ce fichier GPX ?"
+        confirmLabel="Supprimer le fichier" onConfirm={() => effectuer(async () => {
+          if (!selected) return
+          await removeMedia(selected.id)
+          await refresh()
+          setSelected(null)
+          toast('Fichier GPX supprimé.', 'info')
+        })}>
+        <p>Le fichier « {selected?.nom} » sera supprimé définitivement.</p>
+      </ConfirmDialog>
+    </section>
+  )
+}
+
 function ImportMediaModal({
   open,
   onClose,

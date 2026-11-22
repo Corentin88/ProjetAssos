@@ -35,13 +35,18 @@ export class AuthRetentionService implements OnModuleInit, OnModuleDestroy {
 
   private async purge() {
     const now = new Date();
-    await this.prisma.$transaction([
-      this.prisma.accountToken.deleteMany({
+    await this.prisma.$transaction(async tx => {
+      await tx.accountToken.deleteMany({
         where: { expiresAt: { lte: now } },
-      }),
-      this.prisma.session.deleteMany({ where: { expiresAt: { lte: now } } }),
-      this.prisma
-        .$executeRaw`DELETE FROM notifications WHERE created_at <= now() - INTERVAL '1 year'`,
-    ]);
+      });
+      await tx.session.deleteMany({ where: { expiresAt: { lte: now } } });
+      await tx.$executeRaw`DELETE FROM notifications WHERE created_at <= now() - INTERVAL '1 year'`;
+      // Le placeholder et ses réponses restent en place après la purge du dossier.
+      await tx.$executeRaw`DELETE FROM comment_edits e USING comment_moderations m
+        WHERE e.comment_id = m.comment_id AND m.created_at <= now() - INTERVAL '6 months'`;
+      await tx.$executeRaw`UPDATE comments c SET user_id = NULL FROM comment_moderations m
+        WHERE c.id = m.comment_id AND m.created_at <= now() - INTERVAL '6 months'`;
+      await tx.$executeRaw`DELETE FROM comment_moderations WHERE created_at <= now() - INTERVAL '6 months'`;
+    });
   }
 }

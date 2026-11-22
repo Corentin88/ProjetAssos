@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import { useToast } from '../hooks/useToast'
-import type { Article, Block } from '../types'
+import type { Article, Block, TrailFields } from '../types'
 import { apiUrl, authErrorMessage, protectedRequest } from './auth'
 import { setContent, setContentError } from './db'
 import type { ContentSnapshot } from './db'
@@ -35,6 +35,7 @@ async function mutate<T>(path: string, method: string, body?: object) {
 }
 
 type ArticleInput = Pick<Article, 'titre' | 'blocks' | 'categorieIds' | 'tagIds' | 'coverMediaId'>
+  & { trail?: (TrailFields & { gpxMediaId: string }) | null }
 function articlePayload(input: ArticleInput) {
   return {
     ...input,

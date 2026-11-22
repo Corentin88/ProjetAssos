@@ -51,18 +51,22 @@ export class AccountLinksService {
   }
 
   async send(email: string, purpose: AccountTokenPurpose, token: string) {
-    this.assertConfigured();
     const path = purpose.toLowerCase().replaceAll('_', '-');
     const link = `${this.config.apiOrigin}/api/v1/auth/link/${path}#token=${token}`;
+    return this.sendText(email, subjects[purpose], `${subjects[purpose]}\n\n${link}\n\nCe lien temporaire est à usage unique.`);
+  }
+
+  async sendText(email: string, subject: string, text: string) {
+    this.assertConfigured();
     try {
       await this.transport!.sendMail({
         from: this.config.mailFrom,
         to: email,
-        subject: subjects[purpose],
-        text: `${subjects[purpose]}\n\n${link}\n\nCe lien temporaire est à usage unique.`,
+        subject,
+        text,
       });
     } catch {
-      this.logger.warn('L’envoi d’un lien de compte a échoué.');
+      this.logger.warn('L’envoi par SMTP a échoué.');
       throw new ServiceUnavailableException();
     }
   }

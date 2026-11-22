@@ -1,13 +1,8 @@
 import { useSyncExternalStore } from 'react'
-import type { Avatar, User } from '../types'
+import type { ApiAvatar, Avatar, User } from '../types'
 
 const api = (import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1').replace(/\/+$/, '')
 const sessionLock = `projetassos-auth:${api}`
-
-type ApiAvatar =
-  | { kind: 'DEFAULT' }
-  | { kind: 'PRESET'; preset: number }
-  | { kind: 'PERSONAL' | 'GOOGLE'; url: string }
 
 type ApiProfile = {
   id: string
@@ -69,7 +64,7 @@ function publish(next: Snapshot) {
   listeners.forEach(listener => listener())
 }
 
-function mapAvatar(avatar: ApiAvatar): Avatar {
+export function mapAvatar(avatar: ApiAvatar): Avatar {
   switch (avatar.kind) {
     case 'PERSONAL': return { type: 'image', url: avatar.url }
     case 'GOOGLE': return { type: 'google', url: avatar.url }
@@ -105,7 +100,7 @@ export function apiUrl(path: string) {
   return `${api}${path}`
 }
 
-async function request<T>(path: string, method = 'GET', data?: object, token?: string, binary = false): Promise<T> {
+export async function request<T>(path: string, method = 'GET', data?: object, token?: string, binary = false): Promise<T> {
   const headers = new Headers()
   if (data && !(data instanceof FormData)) headers.set('Content-Type', 'application/json')
   if (token) headers.set('Authorization', `Bearer ${token}`)

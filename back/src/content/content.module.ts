@@ -40,6 +40,7 @@ import {
 } from './content.dto.js';
 import { contentLog, contentSlug, lockAdmin } from './content.shared.js';
 import { MediaService } from './media.service.js';
+import { gpxSizeLimit, TrailsService } from './trails.js';
 
 function snapshot(
   prisma: PrismaService,
@@ -94,6 +95,7 @@ class PublicContentController {
     private readonly prisma: PrismaService,
     private readonly articles: ArticlesService,
     private readonly media: MediaService,
+    private readonly trails: TrailsService,
   ) {}
 
   @Get('content')
@@ -105,6 +107,15 @@ class PublicContentController {
   async image(@Param('id', ParseUUIDPipe) id: string) {
     const file = await this.media.file(id, false);
     return new StreamableFile(file.data, { type: file.mime });
+  }
+
+  @Get('articles/:id/gpx')
+  @UseGuards(AccessGuard)
+  async gpx(@Param('id', ParseUUIDPipe) id: string) {
+    return new StreamableFile(await this.trails.download(id), {
+      type: 'application/gpx+xml',
+      disposition: 'attachment; filename="parcours.gpx"',
+    });
   }
 }
 
@@ -127,6 +138,7 @@ class AdminContentController {
     private readonly articles: ArticlesService,
     private readonly media: MediaService,
     private readonly sessions: SessionService,
+    private readonly trails: TrailsService,
   ) {}
 
   @Get()
@@ -225,6 +237,17 @@ class AdminContentController {
     return this.media.write(actor, file?.buffer, dto);
   }
 
+  @Get('gpx')
+  listGpx() {
+    return this.trails.list();
+  }
+
+  @Post('gpx')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: gpxSizeLimit, files: 1, fields: 0 } }))
+  uploadGpx(@CurrentUser() actor: Principal, @UploadedFile() file?: { buffer: Buffer; originalname: string }) {
+    return this.trails.upload(actor, file?.buffer, file?.originalname);
+  }
+
   @Patch('media/:id')
   @HttpCode(204)
   metadata(
@@ -294,6 +317,6 @@ class AdminContentController {
 @Module({
   imports: [AuthModule],
   controllers: [PublicContentController, AdminContentController],
-  providers: [ArticlesService, MediaService],
+  providers: [ArticlesService, MediaService, TrailsService],
 })
 export class ContentModule {}
