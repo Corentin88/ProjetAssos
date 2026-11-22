@@ -32,6 +32,7 @@ services:
     environment:
       # Docker Desktop ne relaie pas toujours les événements sur les fichiers Windows.
       CHOKIDAR_USEPOLLING: "true"
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:3000/api/v1}
     ports:
       - "127.0.0.1:5173:5173"
     volumes:
@@ -50,10 +51,19 @@ services:
     environment:
       DATABASE_URL_HOTE: ${DATABASE_URL:?Renseignez DATABASE_URL dans le fichier .env}
       NODE_OPTIONS: "--import=/app/docker/database-url.mjs"
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
+      API_ORIGIN: ${API_ORIGIN:-http://localhost:3000}
+      FRONT_ORIGIN: ${FRONT_ORIGIN:-http://localhost:5173}
+      SMTP_URL: ${SMTP_URL:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
       - ./back/src:/app/src:ro
+      - avatar_storage:/app/storage
 
 volumes:
   postgres_data:
+  avatar_storage:

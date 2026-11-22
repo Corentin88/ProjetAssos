@@ -1,7 +1,8 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft, MessageCircle } from 'lucide-react'
-import { currentUser, useDb } from '../../lib/db'
+import { useDb } from '../../lib/db'
+import { ApiError, getPublicProfile, useCurrentUser } from '../../lib/auth'
 import { getArticleById, getUser, userPublicComments } from '../../lib/selectors'
 import { formatDate, formatMoisAnnee } from '../../lib/format'
 import { Avatar } from '../../components/ui/misc'
@@ -14,23 +15,41 @@ function ProfilPublicContenu({ tousLesCommentaires }: { tousLesCommentaires?: bo
   useDb()
   const { id } = useParams()
   // L'identifiant « moi » pointe vers la session courante
-  const sessionUser = currentUser()
+  const sessionUser = useCurrentUser()
   const cibleId = id === 'moi' ? (sessionUser?.id ?? undefined) : id
-  const cible = getUser(cibleId ?? null)
+  const idApi = cibleId && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(cibleId) ? cibleId : undefined
+  const [profil, setProfil] = useState<{
+    id: string; data?: Awaited<ReturnType<typeof getPublicProfile>>; indisponible?: boolean
+  }>()
+  useEffect(() => {
+    if (!idApi) return
+    let actif = true
+    void getPublicProfile(idApi).then(data => {
+      if (actif) setProfil({ id: idApi, data })
+    }).catch(error => {
+      if (actif) setProfil({ id: idApi, indisponible: !(error instanceof ApiError && error.status === 404) })
+    })
+    return () => { actif = false }
+  }, [idApi, sessionUser?.id])
+  const cible = idApi ? (profil?.id === idApi ? profil.data : undefined) : getUser(cibleId ?? null)
+
+  if (idApi && profil?.id !== idApi) {
+    return <p className="mx-auto max-w-3xl px-4 py-16" role="status">Chargement du profil…</p>
+  }
 
   if (!cible) {
     return (
       <div className="mx-auto max-w-3xl px-4 py-16">
         <ErrorState
-          title="Profil introuvable"
-          description="Ce profil n'existe pas ou appartient à un compte supprimé."
+          title={idApi && profil?.indisponible ? 'Profil indisponible' : 'Profil introuvable'}
+          description={idApi && profil?.indisponible ? 'Le profil n’a pas pu être chargé.' : "Ce profil n'existe pas ou appartient à un compte supprimé."}
         />
       </div>
     )
   }
 
   const commentairesPublics = userPublicComments(cible.id)
-  const nbCommentaires = commentairesPublics.length
+  const nbCommentaires = idApi ? profil?.data?.commentCount ?? 0 : commentairesPublics.length
   const commentaires = tousLesCommentaires ? commentairesPublics : commentairesPublics.slice(0, 5) // §15
 
   const prenom = cible.prenom
@@ -93,7 +112,7 @@ function ProfilPublicContenu({ tousLesCommentaires }: { tousLesCommentaires?: bo
           </ul>
         )}
 
-        {!tousLesCommentaires && nbCommentaires > 5 ? (
+        {!tousLesCommentaires && commentairesPublics.length > 5 ? (
           <p className="mt-5">
             <Link
               to={`/profil/${cible.id}/commentaires`}

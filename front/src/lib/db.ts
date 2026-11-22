@@ -8,8 +8,6 @@ import type {
   ActivityLogEntry,
   Article,
   AssociationPage,
-  AuthMethod,
-  Avatar,
   Block,
   Category,
   Comment,
@@ -29,7 +27,6 @@ import { logsSeed, messagesSeed, notificationsSeed, statsSeed } from '../data/di
 import { mediasSeed } from '../data/medias'
 import { usersSeed } from '../data/users'
 
-export const MOT_DE_PASSE_DEMO = 'demo1234'
 export const MOTIFS_MODERATION = [
   'Spam',
   'Insulte / comportement inapproprié',
@@ -161,36 +158,15 @@ export function resetDemoData(): void {
   db.logs = fresh.logs
   db.association = fresh.association
   db.stats = fresh.stats
-  setSession(null)
   emit()
 }
 
-// ------------------------------------------------------------
-// Session simulée (jetons d'accès / refresh token gérés côté
-// backend en production — §4)
-// ------------------------------------------------------------
-export interface Session {
-  userId: string
-  via: AuthMethod
-}
-const SESSION_KEY = 'projetassos_demo_session'
-function loadSession(): Session | null {
-  try {
-    const raw = localStorage.getItem(SESSION_KEY)
-    return raw ? (JSON.parse(raw) as Session) : null
-  } catch {
-    return null
-  }
-}
-export const session: { current: Session | null } = { current: loadSession() }
-
-function setSession(s: Session | null) {
-  session.current = s
-  try {
-    if (s) localStorage.setItem(SESSION_KEY, JSON.stringify(s))
-    else localStorage.removeItem(SESSION_KEY)
-  } catch {
-    /* stockage indisponible : la session reste en mémoire */
+export function anonymizeDemoComments(userId: string) {
+  const comments = db.comments.filter(comment => comment.auteurId === userId)
+  if (!comments.length) return
+  for (const comment of comments) {
+    comment.auteurId = null
+    comment.auteurLabel = 'Utilisateur supprimé'
   }
   emit()
 }
@@ -249,172 +225,6 @@ export function notify(
   link?: string,
 ): void {
   db.notifications.unshift({ id: uid('n'), userId, type, titre, texte, at: now(), lue: false, link })
-}
-
-// ------------------------------------------------------------
-// Authentification simulée (§3 à §9)
-// ------------------------------------------------------------
-export type LoginResult = { ok: true } | { ok: false; error: string }
-
-export function login(email: string, password: string): LoginResult {
-  const u = db.users.find((x) => x.email.toLowerCase() === email.trim().toLowerCase())
-  if (!u) {
-    return { ok: false, error: "Aucun compte ne correspond à cette adresse e-mail et à ce mot de passe." }
-  }
-  if (!u.authMethods.includes('motdepasse')) {
-    return {
-      ok: false,
-      error: u.authMethods.includes('google')
-        ? "Ce compte utilise uniquement la connexion avec Google : utilisez le bouton « Se connecter avec Google » (le mot de passe se définit ensuite depuis l'espace personnel si besoin)."
-        : "Aucun mot de passe n'est encore défini pour ce compte : utilisez le lien d'invitation reçu par courriel pour définir votre mot de passe.",
-    }
-  }
-  if (password !== MOT_DE_PASSE_DEMO) {
-    return { ok: false, error: "Aucun compte ne correspond à cette adresse e-mail et à ce mot de passe." }
-  }
-  if (u.statut === 'suspendu') {
-    return {
-      ok: false,
-      error: "Ce compte est suspendu. Il ne peut plus se connecter, mais les contenus publics du site restent accessibles. Contactez l'association pour plus d'informations.",
-    }
-  }
-  setSession({ userId: u.id, via: 'motdepasse' })
-  u.lastActivityAt = now()
-  emit()
-  return { ok: true }
-}
-
-export function loginGoogle(): LoginResult {
-  // Maquette : connexion avec le compte de démonstration Google
-  const u = db.users.find((x) => x.id === 'u4')
-  if (!u) return { ok: false, error: 'Le compte Google de démonstration est indisponible.' }
-  if (u.statut === 'suspendu') return { ok: false, error: 'Ce compte est suspendu.' }
-  setSession({ userId: u.id, via: 'google' })
-  u.lastActivityAt = now()
-  emit()
-  return { ok: true }
-}
-
-export function logout(): void {
-  setSession(null)
-}
-
-export function currentUser(): User | null {
-  if (!session.current) return null
-  return db.users.find((u) => u.id === session.current!.userId) ?? null
-}
-
-export function register(prenom: string, nom: string, email: string): LoginResult {
-  const exists = db.users.some((x) => x.email.toLowerCase() === email.trim().toLowerCase())
-  if (exists) {
-    return { ok: false, error: 'Un compte existe déjà avec cette adresse e-mail. Vous pouvez vous connecter ou réinitialiser votre mot de passe.' }
-  }
-  const u: User = {
-    id: uid('u'),
-    prenom: prenom.trim(),
-    nom: nom.trim(),
-    email: email.trim(),
-    role: 'utilisateur', // inscription publique : rôle Utilisateur (§3.1)
-    statut: 'actif', // compte activé immédiatement (§3.1)
-    avatar: { type: 'initiales', colorIndex: Math.floor(Math.random() * 6) },
-    authMethods: ['motdepasse'],
-    createdAt: now(),
-    lastActivityAt: now(),
-  }
-  db.users.push(u)
-  setSession({ userId: u.id, via: 'motdepasse' })
-  emit()
-  return { ok: true }
-}
-
-// ------------------------------------------------------------
-// Comptes — espace personnel (§6, §8, §12, §13)
-// ------------------------------------------------------------
-export function updateProfile(
-  userId: string,
-  patch: Partial<Pick<User, 'prenom' | 'nom'>>,
-  avatar?: Avatar,
-): void {
-  const u = db.users.find((x) => x.id === userId)
-  if (!u) return
-  if (patch.prenom !== undefined) u.prenom = patch.prenom
-  if (patch.nom !== undefined) u.nom = patch.nom
-  if (avatar) u.avatar = avatar
-  u.lastActivityAt = now()
-  emit()
-}
-
-export function updateAvatar(userId: string, avatar: Avatar): void {
-  const u = db.users.find((x) => x.id === userId)
-  if (!u) return
-  u.avatar = avatar
-  emit()
-}
-
-/** Modification du mot de passe : toutes les sessions existantes sont
- *  invalidées, l'utilisateur doit se reconnecter (§6) */
-export function changePassword(userId: string, ancien: string, nouveau: string): LoginResult {
-  const u = db.users.find((x) => x.id === userId)
-  if (!u) return { ok: false, error: 'Compte introuvable.' }
-  if (ancien !== MOT_DE_PASSE_DEMO) {
-    return { ok: false, error: "L'ancien mot de passe est incorrect." }
-  }
-  // Maquette : les sessions existantes sont invalidées (déconnexion)
-  setSession(null)
-  emit()
-  return { ok: true }
-}
-
-/** Demande de changement d'e-mail : la nouvelle adresse reste en attente
- *  de validation, l'ancienne reste active (§8) */
-export function requestEmailChange(userId: string, nouvelle: string): void {
-  const u = db.users.find((x) => x.id === userId)
-  if (!u) return
-  u.pendingEmail = nouvelle.trim()
-  emit()
-}
-
-/** Maquette : simule la validation du lien reçu par courriel (§8) */
-export function confirmEmailChange(userId: string): void {
-  const u = db.users.find((x) => x.id === userId)
-  if (!u || !u.pendingEmail) return
-  u.email = u.pendingEmail
-  u.pendingEmail = undefined
-  notify(userId, 'compte', 'Adresse e-mail modifiée', 'Votre nouvelle adresse e-mail a été validée. Elle est désormais votre adresse principale.')
-  emit()
-}
-
-/** Association explicite du compte Google (§5) */
-export function associerGoogle(userId: string): void {
-  const u = db.users.find((x) => x.id === userId)
-  if (!u || u.authMethods.includes('google')) return
-  u.authMethods.push('google')
-  notify(userId, 'compte', 'Compte Google associé', 'Votre compte Google est désormais associé. Vous pouvez vous connecter avec Google ou avec votre mot de passe.')
-  emit()
-}
-
-export function dissocierGoogle(userId: string): void {
-  const u = db.users.find((x) => x.id === userId)
-  if (!u) return
-  if (u.authMethods.length <= 1) return // toujours au moins une méthode
-  u.authMethods = u.authMethods.filter((m) => m !== 'google')
-  notify(userId, 'compte', 'Compte Google dissocié', 'Votre compte Google n\'est plus associé. Vous continuez à vous connecter avec votre mot de passe.')
-  emit()
-}
-
-/** Suppression définitive du compte (§12) : les commentaires sont
- *  conservés et l'auteur devient « Utilisateur supprimé » */
-export function deleteOwnAccount(userId: string): void {
-  db.comments.forEach((c) => {
-    if (c.auteurId === userId) {
-      c.auteurId = null
-      c.auteurLabel = 'Utilisateur supprimé'
-    }
-  })
-  db.notifications = db.notifications.filter((n) => n.userId !== userId)
-  db.users = db.users.filter((u) => u.id !== userId)
-  setSession(null)
-  emit()
 }
 
 // ------------------------------------------------------------
@@ -628,13 +438,13 @@ export function addComment(
   auteurId: string,
   contenu: string,
   parentId: string | null,
+  auteurLabel: string,
 ): Comment {
-  const u = db.users.find((x) => x.id === auteurId)
   const c: Comment = {
     id: uid('c'),
     articleId,
     auteurId,
-    auteurLabel: u ? fullName(u) : 'Utilisateur supprimé',
+    auteurLabel,
     contenu: contenu.trim(),
     createdAt: now(),
     updatedAt: null,
@@ -654,7 +464,7 @@ export function addComment(
         parent.auteurId,
         'interaction',
         'Réponse à votre commentaire',
-        `${fullName(u)} a répondu à votre commentaire sur « ${article?.titre ?? 'un article'} ».`,
+        `${auteurLabel} a répondu à votre commentaire sur « ${article?.titre ?? 'un article'} ».`,
         `/actualites/${article?.slug ?? ''}#commentaire-${parentId}`,
       )
     }

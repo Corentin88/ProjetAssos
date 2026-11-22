@@ -1,7 +1,8 @@
+import { useCurrentUser } from '../../lib/auth'
 import { useMemo, useState } from 'react'
 import { ScrollText, Trash2 } from 'lucide-react'
 import type { LogActionType } from '../../types'
-import { db, deleteLogEntry, fullName, session, useDb, useDbVersion } from '../../lib/db'
+import { db, deleteLogEntry, fullName, useDb, useDbVersion } from '../../lib/db'
 import { formatDateTime } from '../../lib/format'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
 import { Badge, EmptyState } from '../../components/ui/feedback'
@@ -40,7 +41,7 @@ export function JournalAdmin() {
   useDb()
   const version = useDbVersion()
   const { toast } = useToast()
-  const admin = session.current ? db.users.find((u) => u.id === session.current!.userId) : null
+  const admin = useCurrentUser()
   const adminId = admin?.id ?? 'u1'
 
   const [filtreAdmin, setFiltreAdmin] = useState('')

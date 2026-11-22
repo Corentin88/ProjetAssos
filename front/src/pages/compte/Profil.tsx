@@ -2,26 +2,24 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Camera, CheckCircle2, Info } from 'lucide-react'
 import type { Avatar as AvatarSpec } from '../../types'
-import { confirmEmailChange, db, requestEmailChange, session, updateAvatar, updateProfile, useDb } from '../../lib/db'
-import { getMedia } from '../../lib/selectors'
+import { authErrorMessage, requestEmailChange, updateAvatar, updateProfile, useCurrentUser } from '../../lib/auth'
 import { Avatar } from '../../components/ui/misc'
 import { Button, Field, Input } from '../../components/ui/form'
 import { Alert } from '../../components/ui/feedback'
 import { useToast } from '../../hooks/useToast'
 import { validateEmail } from '../../hooks/common'
-import { mediaUrl } from '../../lib/assets'
 
 /** Section Profil (§13.1) : prénom, nom, avatar, adresse e-mail (procédure
  *  §8), mot de passe (via Sécurité). Rôle, date de création et statut
  *  consultables mais non modifiables. */
 export function Profil() {
-  useDb()
   const { toast } = useToast()
-  const user = session.current ? db.users.find((u) => u.id === session.current!.userId) ?? null : null
+  const user = useCurrentUser()
   const [valeurs, setValeurs] = useState({ prenom: user?.prenom ?? '', nom: user?.nom ?? '' })
   const [erreurs, setErreurs] = useState<Record<string, string>>({})
   const [nouvelEmail, setNouvelEmail] = useState('')
   const [errEmail, setErrEmail] = useState('')
+  const [enCours, setEnCours] = useState(false)
 
   if (!user) return null
 
@@ -31,6 +29,17 @@ export function Profil() {
     colorIndex: i,
   }))
   const avatarDefaut: AvatarSpec = { type: 'defaut' }
+  const choisirAvatar = async (avatar: AvatarSpec) => {
+    setEnCours(true)
+    try {
+      await updateAvatar(avatar)
+      toast(avatar.type === 'defaut' ? 'Votre avatar par défaut a été rétabli.' : 'Votre avatar a été mis à jour.')
+    } catch (error) {
+      toast(authErrorMessage(error), 'erreur')
+    } finally {
+      setEnCours(false)
+    }
+  }
 
   return (
     <div className="grid gap-8 lg:grid-cols-2">
@@ -41,8 +50,9 @@ export function Profil() {
         </h2>
         <form
           className="mt-5 flex flex-col gap-5"
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault()
+            if (enCours) return
             const errs: Record<string, string> = {}
             if (!valeurs.prenom.trim()) errs.prenom = 'Le prénom est obligatoire.'
             if (!valeurs.nom.trim()) errs.nom = 'Le nom est obligatoire.'
@@ -50,8 +60,15 @@ export function Profil() {
               setErreurs(errs)
               return
             }
-            updateProfile(user.id, { prenom: valeurs.prenom.trim(), nom: valeurs.nom.trim() })
-            toast('Vos informations ont été enregistrées.')
+            setEnCours(true)
+            try {
+              await updateProfile(valeurs.prenom.trim(), valeurs.nom.trim())
+              toast('Vos informations ont été enregistrées.')
+            } catch (error) {
+              toast(authErrorMessage(error), 'erreur')
+            } finally {
+              setEnCours(false)
+            }
           }}
           noValidate
         >
@@ -79,7 +96,7 @@ export function Profil() {
               describedBy={erreurs.nom ? 'p-nom-err' : undefined}
             />
           </Field>
-          <Button type="submit">Enregistrer mes informations</Button>
+          <Button type="submit" disabled={enCours}>Enregistrer mes informations</Button>
         </form>
       </section>
 
@@ -94,17 +111,14 @@ export function Profil() {
         </p>
         <div className="mt-5 flex flex-wrap items-center gap-4">
           <Avatar user={user} size="lg" />
-          <fieldset>
+          <fieldset disabled={enCours}>
             <legend className="mb-2 font-bold">Avatars prédéfinis</legend>
             <ul className="flex flex-wrap gap-3">
               {avatarsPredefinis.map((av, i) => (
                 <li key={i}>
                   <button
                     type="button"
-                    onClick={() => {
-                      updateAvatar(user.id, av)
-                      toast('Votre avatar a été mis à jour.')
-                    }}
+                    onClick={() => void choisirAvatar(av)}
                     aria-label={`Choisir l'avatar prédéfini ${i + 1}`}
                     aria-pressed={user.avatar.type === 'initiales' && couleurParDefaut === i}
                     className={`h-14 w-14 rounded-full border-4 ${
@@ -125,10 +139,7 @@ export function Profil() {
               <li>
                 <button
                   type="button"
-                  onClick={() => {
-                    updateAvatar(user.id, avatarDefaut)
-                    toast('Votre avatar par défaut a été rétabli.')
-                  }}
+                  onClick={() => void choisirAvatar(avatarDefaut)}
                   aria-pressed={user.avatar.type === 'defaut'}
                   className={`inline-flex min-h-[44px] items-center gap-2 rounded-xl border px-4 font-bold ${
                     user.avatar.type === 'defaut' ? 'border-ocre text-ocre-dark' : 'border-line text-forest'
@@ -159,26 +170,14 @@ export function Profil() {
                 Tant que la nouvelle adresse n'est pas validée, l'ancienne reste active et vous
                 pouvez continuer à utiliser votre compte normalement.
               </p>
-              {/* Simulation du clic sur le lien reçu par courriel */}
-              <p className="mt-3">
-                <Button
-                  size="petit"
-                  variant="secondaire"
-                  onClick={() => {
-                    confirmEmailChange(user.id)
-                    toast('Nouvelle adresse e-mail validée (simulation du lien reçu).')
-                  }}
-                >
-                  Simuler la validation du lien reçu
-                </Button>
-              </p>
             </Alert>
           </div>
         ) : null}
         <form
           className="mt-5 flex flex-col gap-4"
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault()
+            if (enCours) return
             const err = validateEmail(nouvelEmail)
             if (err) {
               setErrEmail(err)
@@ -189,9 +188,16 @@ export function Profil() {
               return
             }
             setErrEmail('')
-            requestEmailChange(user.id, nouvelEmail)
-            setNouvelEmail('')
-            toast('Un courriel de validation a été envoyé à la nouvelle adresse.')
+            setEnCours(true)
+            try {
+              await requestEmailChange(nouvelEmail)
+              setNouvelEmail('')
+              toast('Un courriel de validation a été envoyé à la nouvelle adresse.')
+            } catch (error) {
+              setErrEmail(authErrorMessage(error))
+            } finally {
+              setEnCours(false)
+            }
           }}
           noValidate
         >
@@ -214,7 +220,7 @@ export function Profil() {
               describedBy={errEmail ? 'p-email-err' : undefined}
             />
           </Field>
-          <Button type="submit" variant="secondaire">
+          <Button type="submit" variant="secondaire" disabled={enCours}>
             Demander le changement d'adresse
           </Button>
         </form>
@@ -260,17 +266,11 @@ export function Profil() {
           avatar du site peut être retiré par un administrateur, qui ne choisit jamais une
           identité à votre place.
         </p>
-        {user.avatar.type === 'image' && user.avatar.mediaId ? (
-          <p className="mt-2 text-[0.9375rem]">
-            Image personnelle actuelle : {getMedia(user.avatar.mediaId)?.nom}
-            {getMedia(user.avatar.mediaId) ? (
-              <img
-                src={mediaUrl(getMedia(user.avatar.mediaId)!.file)}
-                alt=""
-                className="mt-2 h-20 w-20 rounded-full border border-line object-cover"
-              />
-            ) : null}
-          </p>
+        {user.avatar.type === 'image' ? (
+          <div className="mt-2 text-[0.9375rem]">
+            <p>Image personnelle actuelle</p>
+            <Avatar user={user} size="lg" className="mt-2" />
+          </div>
         ) : null}
         <p className="mt-4">
           <CheckCircle2 aria-hidden="true" className="mr-1 inline h-5 w-5 text-leaf" />

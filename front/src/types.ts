@@ -18,6 +18,7 @@ export interface Avatar {
   type: 'defaut' | 'initiales' | 'image' | 'google'
   colorIndex?: number
   mediaId?: string
+  url?: string
 }
 
 export interface User {

@@ -1,3 +1,4 @@
+import { useCurrentUser } from '../../lib/auth'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { History, MessagesSquare, Pencil, Search, Trash2 } from 'lucide-react'
@@ -7,7 +8,6 @@ import {
   db,
   moderateComment,
   MOTIFS_MODERATION,
-  session,
   useDb,
   useDbVersion,
 } from '../../lib/db'
@@ -27,7 +27,7 @@ export function CommentairesAdmin() {
   useDb()
   const version = useDbVersion()
   const { toast } = useToast()
-  const admin = session.current ? db.users.find((u) => u.id === session.current!.userId) : null
+  const admin = useCurrentUser()
   const adminId = admin?.id ?? 'u1'
 
   const [recherche, setRecherche] = useState('')

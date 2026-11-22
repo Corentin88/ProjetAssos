@@ -1,7 +1,8 @@
+import { useCurrentUser } from '../../lib/auth'
 import type { FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRight, Newspaper, Search, SlidersHorizontal } from 'lucide-react'
-import { currentUser, useDb } from '../../lib/db'
+import { useDb } from '../../lib/db'
 import { getMedia, publishedArticles } from '../../lib/selectors'
 import { ArticleCarousel } from '../../components/content/ArticleCarousel'
 import { ArticleCard } from '../../components/content/ArticleCard'
@@ -18,7 +19,7 @@ export function Accueil() {
   useDb()
   useScrollMemory('accueil')
   const navigate = useNavigate()
-  const utilisateur = currentUser()
+  const utilisateur = useCurrentUser()
 
   const articles = publishedArticles()
   const derniers = articles.slice(0, 5) // 5 derniers articles (§26)

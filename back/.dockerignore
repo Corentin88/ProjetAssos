@@ -5,6 +5,7 @@ node_modules
 dist
 generated
 src/generated
+storage
 coverage
 *.log
 *.tsbuildinfo

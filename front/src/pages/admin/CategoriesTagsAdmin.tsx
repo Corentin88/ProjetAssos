@@ -1,3 +1,4 @@
+import { useCurrentUser } from '../../lib/auth'
 import { useState } from 'react'
 import { Pencil, Plus, Tag, Tags as TagsIcon, Trash2 } from 'lucide-react'
 import {
@@ -7,7 +8,6 @@ import {
   deleteCategory,
   deleteTag,
   logAction,
-  session,
   updateCategory,
   updateTag,
   useDb,
@@ -29,7 +29,7 @@ function nbArticlesTag(id: string): number {
 export function CategoriesTagsAdmin() {
   useDb()
   const { toast } = useToast()
-  const admin = session.current ? db.users.find((u) => u.id === session.current!.userId) : null
+  const admin = useCurrentUser()
   const adminId = admin?.id ?? 'u1'
 
   const [nouvelleCat, setNouvelleCat] = useState('')

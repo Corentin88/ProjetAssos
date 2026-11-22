@@ -1,8 +1,6 @@
 import type { User } from '../types'
 
-/** Comptes fictifs (§2, §10, §11).
- *  Maquette : tous les comptes de démonstration acceptent le mot de passe
- *  « demo1234 ». Aucun mot de passe réel n'est stocké ni simulé côté serveur. */
+/** Comptes fictifs utilisés par les modules métier de la maquette. */
 export const usersSeed: User[] = [
   {
     id: 'u1',

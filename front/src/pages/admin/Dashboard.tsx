@@ -1,3 +1,4 @@
+import { useCurrentUser } from '../../lib/auth'
 import { Link } from 'react-router-dom'
 import {
   ArrowRight,
@@ -11,7 +12,7 @@ import {
   UserPlus,
   Users,
 } from 'lucide-react'
-import { db, fullName, session, useDb } from '../../lib/db'
+import { db, fullName, useDb } from '../../lib/db'
 import { useFakeLoad } from '../../hooks/common'
 import { Skeleton, SkeletonText } from '../../components/ui/feedback'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
@@ -25,7 +26,7 @@ import { buttonClasses } from '../../components/ui/form'
 export function Dashboard() {
   useDb()
   const chargement = useFakeLoad(500)
-  const admin = session.current ? db.users.find((u) => u.id === session.current!.userId) : null
+  const admin = useCurrentUser()
 
   const publies = db.articles.filter((a) => a.statut === 'publie').length
   const programmes = db.articles.filter((a) => a.statut === 'programme').length

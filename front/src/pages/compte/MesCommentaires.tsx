@@ -1,8 +1,9 @@
+import { useCurrentUser } from '../../lib/auth'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { MessageSquare, Pencil, Trash2 } from 'lucide-react'
 import type { Comment } from '../../types'
-import { db, deleteCommentByAuthor, editComment, session, useDb } from '../../lib/db'
+import { db, deleteCommentByAuthor, editComment, useDb } from '../../lib/db'
 import { myComments } from '../../lib/selectors'
 import { formatDateTime } from '../../lib/format'
 import { Button, Field, Textarea } from '../../components/ui/form'
@@ -16,7 +17,7 @@ import { useToast } from '../../hooks/useToast'
 export function MesCommentaires() {
   useDb()
   const { toast } = useToast()
-  const user = session.current ? db.users.find((u) => u.id === session.current!.userId) ?? null : null
+  const user = useCurrentUser()
   const commentaires = user ? myComments(user.id) : []
   const [aEditer, setAEditer] = useState<Comment | null>(null)
   const [contenuEdition, setContenuEdition] = useState('')

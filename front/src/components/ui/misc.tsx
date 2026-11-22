@@ -1,7 +1,10 @@
 import { Link } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import { AVATAR_COLORS } from '../../data/users'
 import { getMedia } from '../../lib/selectors'
 import { mediaUrl } from '../../lib/assets'
+import { fetchAvatar } from '../../lib/auth'
+import type { Avatar as AvatarSpec } from '../../types'
 
 // ============================================================
 // Avatar — image, avatar prédéfini ou avatar par défaut (§13.2)
@@ -12,19 +15,37 @@ export function Avatar({
   size = 'md',
   className = '',
 }: {
-  user: { prenom: string; nom: string; avatar: { type: string; colorIndex?: number; mediaId?: string } }
+  user: { prenom: string; nom: string; avatar: AvatarSpec }
   size?: 'sm' | 'md' | 'lg'
   className?: string
 }) {
   const dims =
     size === 'lg' ? 'h-20 w-20 text-2xl' : size === 'sm' ? 'h-10 w-10 text-base' : 'h-14 w-14 text-xl'
   // Priorité d'affichage : image personnelle > avatar prédéfini > photo Google > avatar par défaut (§13.2).
-  // Maquette : la photo Google est représentée par l'avatar prédéfini.
   const media = user.avatar.type === 'image' && user.avatar.mediaId ? getMedia(user.avatar.mediaId) : undefined
-  if (media) {
+  const chemin = user.avatar.type === 'image' ? user.avatar.url : undefined
+  const [image, setImage] = useState<{ chemin: string; url: string }>()
+  useEffect(() => {
+    if (!chemin) return
+    const controller = new AbortController()
+    let url: string | undefined
+    void fetchAvatar(chemin, controller.signal).then((blob) => {
+      if (controller.signal.aborted) return
+      url = URL.createObjectURL(blob)
+      setImage({ chemin, url })
+    }).catch(() => {})
+    return () => {
+      controller.abort()
+      if (url) URL.revokeObjectURL(url)
+    }
+  }, [chemin])
+  const source = media ? mediaUrl(media.file)
+    : user.avatar.type === 'google' ? user.avatar.url
+    : image?.chemin === chemin ? image?.url : undefined
+  if (source) {
     return (
       <img
-        src={mediaUrl(media.file)}
+        src={source}
         alt=""
         className={`${dims} shrink-0 rounded-full border border-line object-cover ${className}`}
       />

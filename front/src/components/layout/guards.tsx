@@ -1,20 +1,32 @@
 import { Navigate, useLocation } from 'react-router-dom'
 import type { ReactNode } from 'react'
-import { db, session, useDb } from '../../lib/db'
+import { restoreSession, useAuthSession } from '../../lib/auth'
 import { Alert } from '../ui/feedback'
+import { Button } from '../ui/form'
 
-/** Protection des routes nécessitant une session (§2)
- *  useDb : les garde-fous réagissent immédiatement aux changements de la
- *  base (rôle modifié, compte suspendu par un autre administrateur…) */
+function SessionEnAttente({ indisponible }: { indisponible: boolean }) {
+  return (
+    <div className="mx-auto max-w-3xl px-4 py-16">
+      {indisponible ? (
+        <Alert kind="erreur" title="Session indisponible">
+          <p>Le serveur n’a pas pu vérifier votre session.</p>
+          <Button className="mt-3" variant="secondaire" onClick={() => void restoreSession()}>Réessayer</Button>
+        </Alert>
+      ) : (
+        <p role="status">Vérification de votre session…</p>
+      )}
+    </div>
+  )
+}
+
+/** Protection des routes nécessitant une session (§2). */
 export function RequireAuth({ children }: { children: ReactNode }) {
-  useDb()
   const location = useLocation()
-  const sessionUser = session.current
-    ? db.users.find((u) => u.id === session.current!.userId) ?? null
-    : null
+  const { status, user: sessionUser } = useAuthSession()
 
+  if (status !== 'ready') return <SessionEnAttente indisponible={status === 'unavailable'} />
   if (!sessionUser) {
-    return <Navigate to="/connexion" state={{ from: location.pathname }} replace />
+    return <Navigate to="/connexion" state={{ from: location.pathname + location.search + location.hash }} replace />
   }
   // Compte suspendu : les sessions sont invalidées (§10)
   if (sessionUser.statut === 'suspendu') {
@@ -35,14 +47,12 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 
 /** Protection des routes d'administration (§2.3) */
 export function RequireAdmin({ children }: { children: ReactNode }) {
-  useDb()
   const location = useLocation()
-  const sessionUser = session.current
-    ? db.users.find((u) => u.id === session.current!.userId) ?? null
-    : null
+  const { status, user: sessionUser } = useAuthSession()
 
+  if (status !== 'ready') return <SessionEnAttente indisponible={status === 'unavailable'} />
   if (!sessionUser) {
-    return <Navigate to="/connexion" state={{ from: location.pathname }} replace />
+    return <Navigate to="/connexion" state={{ from: location.pathname + location.search + location.hash }} replace />
   }
   if (sessionUser.statut === 'suspendu') {
     return (

@@ -18,7 +18,8 @@ import {
   Users,
   X,
 } from 'lucide-react'
-import { db, logout, resetDemoData, session, useDb } from '../../lib/db'
+import { db, resetDemoData, useDb } from '../../lib/db'
+import { authErrorMessage, logout, useCurrentUser } from '../../lib/auth'
 import { asset } from '../../lib/assets'
 import { Avatar } from '../ui/misc'
 import { fullName } from '../../lib/db'
@@ -139,9 +140,7 @@ export function AdminLayout() {
   const drawer = useRef<HTMLDialogElement>(null)
   const { navigationCompacte } = useAffichage()
   const [resetOuvert, setResetOuvert] = useState(false)
-  const sessionUser = session.current
-    ? db.users.find((u) => u.id === session.current!.userId) ?? null
-    : null
+  const sessionUser = useCurrentUser()
 
   // Focus du contenu principal à chaque navigation interne
   useEffect(() => {
@@ -153,9 +152,13 @@ export function AdminLayout() {
   const openDrawer = () => drawer.current?.showModal()
   const closeDrawer = () => drawer.current?.close()
 
-  const onDeconnexion = () => {
-    logout()
-    navigate('/')
+  const onDeconnexion = async () => {
+    try {
+      await logout()
+      navigate('/')
+    } catch (error) {
+      toast(authErrorMessage(error), 'erreur')
+    }
   }
 
   const onReset = () => {
@@ -323,9 +326,8 @@ export function AdminLayout() {
         <p>
           Toutes les modifications effectuées dans la maquette (articles créés ou modifiés,
           commentaires, comptes, messages, page de l'association…) seront <strong>définitivement
-          perdues</strong> et les données de démonstration d'origine rétablies. Vous serez
-          déconnecté·e. Cette action est utile pour repartir d'une situation propre pendant la
-          démonstration.
+          perdues</strong> et les données de démonstration d'origine rétablies. Votre session
+          reste ouverte.
         </p>
       </ConfirmDialog>
     </div>

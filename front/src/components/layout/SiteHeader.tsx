@@ -1,7 +1,9 @@
 import { useEffect, useRef } from 'react'
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { LayoutDashboard, LogIn, LogOut, Menu, UserPlus, X } from 'lucide-react'
-import { currentUser, logout, useDb } from '../../lib/db'
+import { useDb } from '../../lib/db'
+import { authErrorMessage, logout, useCurrentUser } from '../../lib/auth'
+import { useToast } from '../../hooks/useToast'
 import { unreadNotificationCount } from '../../lib/selectors'
 import { asset } from '../../lib/assets'
 import { buttonClasses } from '../ui/form'
@@ -24,7 +26,8 @@ export function SiteHeader() {
   const { key } = useLocation()
   const dialogMobile = useRef<HTMLDialogElement>(null)
   const { navigationCompacte } = useAffichage()
-  const utilisateur = currentUser()
+  const utilisateur = useCurrentUser()
+  const { toast } = useToast()
   const compteAccessible = utilisateur?.statut === 'actif'
   const unread = compteAccessible ? unreadNotificationCount(utilisateur.id) : 0
 
@@ -44,10 +47,14 @@ export function SiteHeader() {
     return () => ecran.removeEventListener('change', fermerSurGrandEcran)
   }, [navigationCompacte])
 
-  const onDeconnexion = () => {
+  const onDeconnexion = async () => {
     closeMenu()
-    logout()
-    navigate('/')
+    try {
+      await logout()
+      navigate('/')
+    } catch (error) {
+      toast(authErrorMessage(error), 'erreur')
+    }
   }
 
   const liensPublics = (onNavigate?: () => void) =>

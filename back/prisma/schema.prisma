@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
   output   = "../generated/prisma"
@@ -10,4 +5,542 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+enum UserRole {
+  USER
+  ADMIN
+
+  @@map("user_role")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+
+  @@map("user_status")
+}
+
+enum AvatarKind {
+  DEFAULT
+  PRESET
+  PERSONAL
+  GOOGLE
+
+  @@map("avatar_kind")
+}
+
+enum AccountTokenPurpose {
+  PASSWORD_RESET
+  INVITATION
+  EMAIL_CHANGE
+
+  @@map("account_token_purpose")
+}
+
+enum ArticleStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHED
+  TRASHED
+
+  @@map("article_status")
+}
+
+enum ArticleVersionKind {
+  WORKING
+  PUBLISHED
+
+  @@map("article_version_kind")
+}
+
+enum BlockType {
+  HEADING
+  SUBHEADING
+  PARAGRAPH
+  IMAGE
+  YOUTUBE
+  LIST
+  LINK
+  QUOTE
+
+  @@map("block_type")
+}
+
+enum CommentStatus {
+  PUBLISHED
+  DELETED_BY_AUTHOR
+  DELETED_BY_ADMIN
+
+  @@map("comment_status")
+}
+
+enum ModerationReason {
+  SPAM
+  INAPPROPRIATE
+  OFF_TOPIC
+  ILLEGAL
+  OTHER
+
+  @@map("moderation_reason")
+}
+
+enum MediaType {
+  IMAGE
+  PDF
+  GPX
+
+  @@map("media_type")
+}
+
+enum MediaFormat {
+  JPEG
+  PNG
+  WEBP
+  PDF
+  GPX
+
+  @@map("media_format")
+}
+
+enum TrailDifficulty {
+  EASY
+  MEDIUM
+  HARD
+
+  @@map("trail_difficulty")
+}
+
+enum NotificationType {
+  REPLY
+  ACCOUNT
+  MODERATION
+  INTERACTION
+
+  @@map("notification_type")
+}
+
+enum ActivityAction {
+  CREATE
+  UPDATE
+  DELETE
+  SUSPEND
+  REACTIVATE
+  CHANGE_ROLE
+  PUBLISH
+  SCHEDULE
+  CANCEL_SCHEDULE
+  TRASH
+  RESTORE
+  UNPUBLISH
+
+  @@map("activity_action")
+}
+
+enum ActivityTarget {
+  ACCOUNT
+  ARTICLE
+  CATEGORY
+  TAG
+  COMMENT
+  MEDIA
+  ASSOCIATION
+  CONTACT_MESSAGE
+  ACTIVITY_LOG
+
+  @@map("activity_target")
+}
+
+model User {
+  id                   String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email                String     @unique @db.VarChar(254)
+  passwordHash         String?    @map("password_hash") @db.VarChar(255)
+  googleId             String?    @unique @map("google_id") @db.VarChar(255)
+  passwordSetupPending Boolean    @default(false) @map("password_setup_pending")
+  role                 UserRole   @default(USER)
+  status               UserStatus @default(ACTIVE)
+  failedLoginCount     Int        @default(0) @map("failed_login_count")
+  loginBlockedUntil    DateTime?  @map("login_blocked_until") @db.Timestamptz(6)
+  lastActiveAt         DateTime?  @map("last_active_at") @db.Timestamptz(6)
+  createdAt            DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  profile       Profile?
+  sessions      Session[]
+  accountTokens AccountToken[]
+  articles      Article[]
+  comments      Comment[]
+  moderations   CommentModeration[]
+  notifications Notification[]
+  activityLogs  ActivityLog[]
+
+  @@index([role, status])
+  @@map("users")
+}
+
+model Profile {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String     @unique @map("user_id") @db.Uuid
+  firstName     String     @map("first_name") @db.VarChar(100)
+  lastName      String     @map("last_name") @db.VarChar(100)
+  avatarKind    AvatarKind @default(DEFAULT) @map("avatar_kind")
+  avatarMediaId String?    @map("avatar_media_id") @db.Uuid
+  avatarPreset  String?    @map("avatar_preset")
+  googleAvatar  String?    @map("google_avatar")
+  createdAt     DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  avatarMedia Media? @relation(fields: [avatarMediaId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@index([avatarMediaId], map: "idx_profiles_avatar_media_id")
+  @@map("profiles")
+}
+
+model Session {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  refreshTokens RefreshToken[]
+
+  @@index([userId], map: "idx_sessions_user_id")
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model RefreshToken {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId  String    @map("session_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash") @db.VarChar(255)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(6)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([sessionId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model AccountToken {
+  id         String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String              @map("user_id") @db.Uuid
+  purpose    AccountTokenPurpose
+  tokenHash  String              @unique @map("token_hash") @db.VarChar(255)
+  newEmail   String?             @map("new_email") @db.VarChar(254)
+  createdAt  DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt  DateTime            @map("expires_at") @db.Timestamptz(6)
+  consumedAt DateTime?           @map("consumed_at") @db.Timestamptz(6)
+  revokedAt  DateTime?           @map("revoked_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId, purpose])
+  @@index([expiresAt])
+  @@map("account_tokens")
+}
+
+model Article {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String?       @map("user_id") @db.Uuid
+  slug        String        @unique @db.VarChar(255)
+  status      ArticleStatus @default(DRAFT)
+  publishedAt DateTime?     @map("published_at") @db.Timestamptz(6)
+  scheduledAt DateTime?     @map("scheduled_at") @db.Timestamptz(6)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user          User?            @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  versions      ArticleVersion[]
+  comments      Comment[]
+  notifications Notification[]
+
+  @@index([userId], map: "idx_articles_user_id")
+  @@index([status, publishedAt])
+  @@index([status, scheduledAt])
+  @@map("articles")
+}
+
+model ArticleVersion {
+  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  articleId    String             @map("article_id") @db.Uuid
+  kind         ArticleVersionKind
+  title        String             @db.VarChar(255)
+  coverMediaId String?            @map("cover_media_id") @db.Uuid
+  createdAt    DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  article    Article           @relation(fields: [articleId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  coverMedia Media?            @relation(fields: [coverMediaId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  blocks     ArticleBlock[]
+  categories ArticleCategory[]
+  tags       ArticleTag[]
+  trail      Trail?
+
+  @@unique([articleId, kind])
+  @@index([coverMediaId])
+  @@map("article_versions")
+}
+
+model ArticleBlock {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  versionId String    @map("version_id") @db.Uuid
+  position  Int
+  type      BlockType
+  data      Json      @default("{}")
+  mediaId   String?   @map("media_id") @db.Uuid
+
+  version ArticleVersion @relation(fields: [versionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  media   Media?         @relation(fields: [mediaId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@unique([versionId, position])
+  @@index([mediaId])
+  @@map("article_blocks")
+}
+
+model Category {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String   @unique @db.VarChar(255)
+  slug      String   @unique @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  articles ArticleCategory[]
+
+  @@map("categories")
+}
+
+model Tag {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String   @unique @db.VarChar(255)
+  slug      String   @unique @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  articles ArticleTag[]
+
+  @@map("tags")
+}
+
+model ArticleCategory {
+  versionId  String @map("version_id") @db.Uuid
+  categoryId String @map("category_id") @db.Uuid
+
+  version  ArticleVersion @relation(fields: [versionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  category Category       @relation(fields: [categoryId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([versionId, categoryId])
+  @@index([categoryId])
+  @@map("article_categories")
+}
+
+model ArticleTag {
+  versionId String @map("version_id") @db.Uuid
+  tagId     String @map("tag_id") @db.Uuid
+
+  version ArticleVersion @relation(fields: [versionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tag     Tag            @relation(fields: [tagId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([versionId, tagId])
+  @@index([tagId], map: "idx_article_tags_tag_id")
+  @@map("article_tags")
+}
+
+model Comment {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String?       @map("user_id") @db.Uuid
+  articleId String        @map("article_id") @db.Uuid
+  parentId  String?       @map("parent_id") @db.Uuid
+  content   String?
+  status    CommentStatus @default(PUBLISHED)
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user          User?              @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  article       Article            @relation(fields: [articleId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  parent        Comment?           @relation("CommentReplies", fields: [articleId, parentId], references: [articleId, id], onDelete: Cascade, onUpdate: NoAction)
+  replies       Comment[]          @relation("CommentReplies")
+  edits         CommentEdit[]
+  moderation    CommentModeration?
+  notifications Notification[]
+
+  @@unique([articleId, id])
+  @@index([userId], map: "idx_comments_user_id")
+  @@index([articleId, createdAt])
+  @@index([parentId], map: "idx_comments_parent_id")
+  @@map("comments")
+}
+
+model CommentEdit {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  commentId String   @map("comment_id") @db.Uuid
+  content   String
+  editedAt  DateTime @default(now()) @map("edited_at") @db.Timestamptz(6)
+
+  comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([commentId, editedAt])
+  @@map("comment_edits")
+}
+
+model CommentModeration {
+  id        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  commentId String           @unique @map("comment_id") @db.Uuid
+  userId    String?          @map("user_id") @db.Uuid
+  reason    ModerationReason
+  details   String?
+  content   String
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([userId], map: "idx_comment_moderations_user_id")
+  @@index([createdAt])
+  @@map("comment_moderations")
+}
+
+model Association {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @db.VarChar(255)
+  description String
+  address     String?
+  postalCode  String?  @map("postal_code")
+  city        String?
+  email       String?  @db.VarChar(254)
+  phone       String?  @db.VarChar(20)
+  latitude    Float?
+  longitude   Float?
+  hours       String?
+  socialLinks Json     @default("{}") @map("social_links")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  blocks AssociationBlock[]
+
+  @@map("associations")
+}
+
+model AssociationBlock {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associationId String    @map("association_id") @db.Uuid
+  position      Int
+  type          BlockType
+  data          Json      @default("{}")
+  mediaId       String?   @map("media_id") @db.Uuid
+
+  association Association @relation(fields: [associationId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  media       Media?      @relation(fields: [mediaId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@unique([associationId, position])
+  @@index([mediaId])
+  @@map("association_blocks")
+}
+
+model Media {
+  id        String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String      @db.VarChar(255)
+  type      MediaType
+  format    MediaFormat
+  path      String      @unique
+  sizeBytes BigInt      @map("size_bytes")
+  altText   String?     @map("alt_text")
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  profiles          Profile[]
+  articleCovers     ArticleVersion[]
+  articleBlocks     ArticleBlock[]
+  associationBlocks AssociationBlock[]
+  trails            Trail[]
+
+  @@map("media")
+}
+
+model Trail {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  versionId     String          @unique @map("version_id") @db.Uuid
+  gpxMediaId    String          @map("gpx_media_id") @db.Uuid
+  name          String          @db.VarChar(255)
+  description   String
+  distance      Float
+  elevationGain Float           @map("elevation_gain")
+  elevationLoss Float           @map("elevation_loss")
+  duration      Int
+  difficulty    TrailDifficulty
+  mapPreview    Json            @map("map_preview")
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  version  ArticleVersion @relation(fields: [versionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  gpxMedia Media          @relation(fields: [gpxMediaId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@index([gpxMediaId], map: "idx_trails_gpx_media_id")
+  @@map("trails")
+}
+
+model Notification {
+  id        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String           @map("user_id") @db.Uuid
+  articleId String?          @map("article_id") @db.Uuid
+  commentId String?          @map("comment_id") @db.Uuid
+  title     String           @db.VarChar(255)
+  message   String
+  type      NotificationType
+  isRead    Boolean          @default(false) @map("is_read")
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  article Article? @relation(fields: [articleId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  comment Comment? @relation(fields: [commentId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([userId, isRead, createdAt])
+  @@index([createdAt])
+  @@index([articleId])
+  @@index([commentId])
+  @@map("notifications")
+}
+
+model ContactMessage {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  firstName String    @map("first_name") @db.VarChar(100)
+  lastName  String    @map("last_name") @db.VarChar(100)
+  email     String    @db.VarChar(254)
+  subject   String    @db.VarChar(255)
+  message   String
+  isRead    Boolean   @default(false) @map("is_read")
+  repliedAt DateTime? @map("replied_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([isRead, createdAt])
+  @@map("contact_messages")
+}
+
+model ActivityLog {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String?        @map("user_id") @db.Uuid
+  action      ActivityAction
+  target      ActivityTarget
+  targetId    String?        @map("target_id") @db.Uuid
+  description String
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@index([target, targetId, createdAt])
+  @@index([createdAt])
+  @@map("activity_logs")
 }
