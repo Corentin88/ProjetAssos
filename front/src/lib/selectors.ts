@@ -1,5 +1,7 @@
 import type { Article, Block, Comment, Media, User } from '../types'
-import { db } from './db'
+import { mediasSeed } from '../data/medias'
+import { articlesSeed } from '../data/articles'
+import { db, publicContent } from './db'
 
 // ------------------------------------------------------------
 // Sélecteurs de lecture (helpers réutilisables)
@@ -7,17 +9,17 @@ import { db } from './db'
 
 /** Articles visibles publiquement (publiés uniquement) */
 export function publishedArticles(): Article[] {
-  return db.articles
+  return publicContent.articles
     .filter((a) => a.statut === 'publie')
     .sort((a, b) => (b.publishedAt ?? b.updatedAt).localeCompare(a.publishedAt ?? a.updatedAt))
 }
 
 export function getArticleById(id: string): Article | undefined {
-  return db.articles.find((a) => a.id === id)
+  return db.articles.find((a) => a.id === id) ?? articlesSeed.find((a) => a.id === id)
 }
 
 export function getArticleBySlug(slug: string): Article | undefined {
-  return db.articles.find((a) => a.slug === slug)
+  return publicContent.articles.find((a) => a.slug === slug)
 }
 
 /** Version actuellement visible publiquement d'un article (§20) */
@@ -33,7 +35,9 @@ export function getTag(id: string) {
 }
 export function getMedia(id: string | null | undefined): Media | undefined {
   if (!id) return undefined
-  return db.medias.find((m) => m.id === id)
+  return publicContent.medias.find((m) => m.id === id)
+    ?? db.medias.find((m) => m.id === id)
+    ?? mediasSeed.find((m) => m.id === id)
 }
 
 /** Visuel d'un article : couverture choisie > première image de l'article >
@@ -52,6 +56,7 @@ export function getUser(id: string | null | undefined): User | undefined {
 
 /** Auteur d'un article en libellé lisible */
 export function articleAuthorLabel(article: Article): string {
+  if (article.auteurLabel) return article.auteurLabel
   const u = getUser(article.auteurId)
   return u ? `${u.prenom} ${u.nom}` : 'Utilisateur supprimé'
 }
@@ -121,8 +126,8 @@ function articleText(a: Article): string {
   const author = getUser(a.auteurId)
   return [
     a.titre,
-    publicBlocks(a).map((b) => b.text ?? '').join(' '),
-    author ? `${author.prenom} ${author.nom}` : '',
+    publicBlocks(a).flatMap((b) => [b.text, ...(b.items ?? [])]).join(' '),
+    author ? `${author.prenom} ${author.nom}` : a.auteurLabel ?? '',
     a.categorieIds.map((id) => getCategory(id)?.nom ?? '').join(' '),
     a.tagIds.map((id) => getTag(id)?.nom ?? '').join(' '),
   ]
@@ -151,8 +156,8 @@ export function searchArticles(query: ArticleQuery): Article[] {
   list = [...list].sort((a, b) => {
     if (tri === 'titre') return dir * a.titre.localeCompare(b.titre, 'fr')
     if (tri === 'auteur') {
-      const na = (getUser(a.auteurId)?.nom ?? '').toLowerCase()
-      const nb = (getUser(b.auteurId)?.nom ?? '').toLowerCase()
+      const na = (a.auteurNom ?? getUser(a.auteurId)?.nom ?? '').toLowerCase()
+      const nb = (b.auteurNom ?? getUser(b.auteurId)?.nom ?? '').toLowerCase()
       return dir * na.localeCompare(nb, 'fr')
     }
     return dir * (a.publishedAt ?? a.updatedAt).localeCompare(b.publishedAt ?? b.updatedAt)

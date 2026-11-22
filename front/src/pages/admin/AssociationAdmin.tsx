@@ -5,6 +5,7 @@ import { db, logAction, saveAssociation, useDb } from '../../lib/db'
 import { toInputDateTime } from '../../lib/format'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
 import { BlockEditor } from '../../components/admin/BlockEditor'
+import { mediasSeed } from '../../data/medias'
 import { Button, Field, Input } from '../../components/ui/form'
 import { TabPanel, Tabs } from '../../components/ui/nav'
 import { useToast } from '../../hooks/useToast'
@@ -75,7 +76,7 @@ export function AssociationAdmin() {
         <div className="mt-6">
           <TabPanel panelId="contenu" activeId={onglet}>
             <div className="rounded-2xl border border-line bg-white p-6">
-              <BlockEditor blocks={blocks} onChange={setBlocks} />
+              <BlockEditor blocks={blocks} onChange={setBlocks} medias={mediasSeed} />
             </div>
           </TabPanel>
 

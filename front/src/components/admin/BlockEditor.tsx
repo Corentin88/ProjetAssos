@@ -1,3 +1,4 @@
+import { ContentImage } from '../content/ContentImage'
 import { useState } from 'react'
 import {
   ArrowDown,
@@ -14,7 +15,7 @@ import {
   Trash2,
   Youtube,
 } from 'lucide-react'
-import type { Block, BlockType } from '../../types'
+import type { Block, BlockType, Media } from '../../types'
 import { newBlockId } from '../../data/articles'
 import { getMedia } from '../../lib/selectors'
 import { mediaUrl } from '../../lib/assets'
@@ -39,9 +40,11 @@ const LIBELLES: Record<BlockType, { nom: string; icone: typeof Text; hint: strin
 export function BlockEditor({
   blocks,
   onChange,
+  medias,
 }: {
   blocks: Block[]
   onChange: (blocks: Block[]) => void
+  medias?: Media[]
 }) {
   const [menuOuvert, setMenuOuvert] = useState(false)
   const [aSupprimer, setASupprimer] = useState<number | null>(null)
@@ -183,6 +186,7 @@ export function BlockEditor({
       </ConfirmDialog>
 
       <MediaPicker
+        sources={medias}
         open={pickerIndex !== null}
         onClose={() => setPickerIndex(null)}
         titre="Choisir l'image du bloc"
@@ -226,7 +230,7 @@ export function BlockEditor({
         return (
           <div className="flex flex-col gap-3">
             {media ? (
-              <img
+              <ContentImage
                 src={mediaUrl(media.file)}
                 alt={b.alt || media.alt}
                 className="h-40 w-full max-w-sm rounded-xl border border-line object-cover"

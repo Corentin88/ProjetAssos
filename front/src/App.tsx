@@ -5,7 +5,9 @@ import { ToastProvider } from './hooks/useToast'
 import { PublicLayout } from './components/layout/PublicLayout'
 import { AdminLayout } from './components/layout/AdminLayout'
 import { RequireAdmin, RequireAuth } from './components/layout/guards'
-import { restoreSession, revalidateSession } from './lib/auth'
+import { restoreSession, revalidateSession, useCurrentUser } from './lib/auth'
+import { clearAdminContent, loadContent } from './lib/content'
+import { ContentGate } from './components/content/ContentGate'
 
 // Pages publiques
 import { Accueil } from './pages/public/Accueil'
@@ -39,7 +41,8 @@ import { StatistiquesAdmin } from './pages/admin/StatistiquesAdmin'
 import { JournalAdmin } from './pages/admin/JournalAdmin'
 
 export default function App() {
-  const { key } = useLocation()
+  const { key, pathname } = useLocation()
+  const user = useCurrentUser()
   useEffect(() => {
     void restoreSession()
     const refreshProfile = () => { void revalidateSession() }
@@ -47,6 +50,14 @@ export default function App() {
     return () => window.removeEventListener('focus', refreshProfile)
   }, [])
   useEffect(() => { void revalidateSession() }, [key])
+  useEffect(() => { void loadContent('public') }, [pathname])
+  useEffect(() => {
+    if (user?.role !== 'administrateur' || user.statut !== 'actif') {
+      clearAdminContent()
+      return
+    }
+    if (pathname.startsWith('/admin')) void loadContent('admin')
+  }, [pathname, user?.id, user?.role, user?.statut])
 
   return (
     <ErreurBoundary>
@@ -54,10 +65,10 @@ export default function App() {
         <Routes>
           {/* Site public */}
           <Route element={<PublicLayout />}>
-            <Route path="/" element={<Accueil />} />
+            <Route path="/" element={<ContentGate><Accueil /></ContentGate>} />
             <Route path="/association" element={<AssociationPage />} />
-            <Route path="/actualites" element={<Actualites />} />
-            <Route path="/actualites/:slug" element={<ArticleDetail />} />
+            <Route path="/actualites" element={<ContentGate><Actualites /></ContentGate>} />
+            <Route path="/actualites/:slug" element={<ContentGate><ArticleDetail /></ContentGate>} />
             {/* La recherche est intégrée à la page des actualités (brief V3 §2) :
                 l'ancienne route redirige vers /actualites avec ses paramètres */}
             <Route path="/recherche" element={<RedirectionRecherche />} />
@@ -114,13 +125,13 @@ export default function App() {
             }
           >
             <Route index element={<Dashboard />} />
-            <Route path="articles" element={<ArticlesAdmin />} />
-            <Route path="articles/nouveau" element={<ArticleEditor />} />
-            <Route path="articles/:id" element={<ArticleEditor />} />
-            <Route path="articles/:id/preview" element={<ArticlePreview />} />
-            <Route path="categories" element={<CategoriesTagsAdmin />} />
+            <Route path="articles" element={<ContentGate admin><ArticlesAdmin /></ContentGate>} />
+            <Route path="articles/nouveau" element={<ContentGate admin><ArticleEditor /></ContentGate>} />
+            <Route path="articles/:id" element={<ContentGate admin><ArticleEditor /></ContentGate>} />
+            <Route path="articles/:id/preview" element={<ContentGate admin><ArticlePreview /></ContentGate>} />
+            <Route path="categories" element={<ContentGate admin><CategoriesTagsAdmin /></ContentGate>} />
             <Route path="commentaires" element={<CommentairesAdmin />} />
-            <Route path="medias" element={<MediasAdmin />} />
+            <Route path="medias" element={<ContentGate admin><MediasAdmin /></ContentGate>} />
             <Route path="utilisateurs" element={<UtilisateursAdmin />} />
             <Route path="utilisateurs/:id" element={<UtilisateurDetail />} />
             <Route path="messages" element={<MessagesAdmin />} />

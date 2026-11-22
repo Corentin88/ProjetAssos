@@ -1,6 +1,7 @@
+import { ContentImage } from '../content/ContentImage'
 import { useMemo, useState } from 'react'
 import { CheckCircle2 } from 'lucide-react'
-import { db } from '../../lib/db'
+import { useDb } from '../../lib/db'
 import { mediaUrl } from '../../lib/assets'
 import type { Media } from '../../types'
 import { Modal } from '../ui/overlay'
@@ -15,23 +16,27 @@ export function MediaPicker({
   onChoose,
   titre = 'Choisir une image dans la médiathèque',
   selectionActive,
+  sources,
 }: {
   open: boolean
   onClose: () => void
   onChoose: (media: Media) => void
   titre?: string
   selectionActive?: string | null
+  sources?: Media[]
 }) {
+  const database = useDb()
+  const bibliotheque = sources ?? database.medias
   const [recherche, setRecherche] = useState('')
   const medias = useMemo(
     () =>
-      db.medias.filter(
+      bibliotheque.filter(
         (m) =>
           !recherche.trim() ||
           m.nom.toLowerCase().includes(recherche.toLowerCase()) ||
           m.alt.toLowerCase().includes(recherche.toLowerCase()),
       ),
-    [recherche],
+    [bibliotheque, recherche],
   )
 
   return (
@@ -70,7 +75,7 @@ export function MediaPicker({
                     selectionActive === m.id ? 'border-ocre bg-ocre-pale' : 'border-line hover:border-forest'
                   }`}
                 >
-                  <img
+                  <ContentImage
                     src={mediaUrl(m.file)}
                     alt={m.alt}
                     className="h-32 w-full rounded-lg object-cover"

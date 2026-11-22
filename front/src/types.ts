@@ -40,12 +40,14 @@ export interface Category {
   id: string
   nom: string
   slug: string
+  articleCount?: number
 }
 
 export interface Tag {
   id: string
   nom: string
   slug: string
+  articleCount?: number
 }
 
 /** Blocs de l'éditeur d'article (§18) */
@@ -80,6 +82,8 @@ export interface Article {
   titre: string
   statut: ArticleStatus
   auteurId: string
+  auteurLabel?: string
+  auteurNom?: string
   createdAt: string
   /** Date de publication effective (§17) */
   publishedAt: string | null
@@ -98,7 +102,7 @@ export interface Article {
   publicSnapshot: Block[] | null
   /** Carrousel de la page d'accueil (§26 — fonctionnement à préciser) */
   misEnAvant: boolean
-  viewCount: number
+  viewCount?: number
 }
 
 export interface CommentEditHistory {
@@ -145,6 +149,7 @@ export interface Media {
   largeur: number
   hauteur: number
   createdAt: string
+  usage?: { articles: string[]; avatars: number; association: boolean }
 }
 
 export interface ContactMessage {

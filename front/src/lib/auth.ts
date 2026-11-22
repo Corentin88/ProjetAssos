@@ -101,15 +101,19 @@ function locked<T>(action: () => Promise<T>): Promise<T> {
   return result
 }
 
-async function request<T>(path: string, method = 'GET', data?: object, token?: string): Promise<T> {
+export function apiUrl(path: string) {
+  return `${api}${path}`
+}
+
+async function request<T>(path: string, method = 'GET', data?: object, token?: string, binary = false): Promise<T> {
   const headers = new Headers()
-  if (data) headers.set('Content-Type', 'application/json')
+  if (data && !(data instanceof FormData)) headers.set('Content-Type', 'application/json')
   if (token) headers.set('Authorization', `Bearer ${token}`)
   let response: Response
   try {
-    response = await fetch(`${api}${path}`, {
+    response = await fetch(apiUrl(path), {
       method, headers, credentials: 'include',
-      body: data === undefined ? undefined : JSON.stringify(data),
+      body: data instanceof FormData ? data : data === undefined ? undefined : JSON.stringify(data),
       signal: AbortSignal.timeout(25_000),
     })
   } catch {
@@ -121,6 +125,7 @@ async function request<T>(path: string, method = 'GET', data?: object, token?: s
     throw new ApiError(response.status, message, Math.max(0, Number(response.headers.get('Retry-After')) || 0))
   }
   if (response.status === 204 || response.status === 202) return undefined as T
+  if (binary) return await response.blob() as T
   return (await response.json()) as T
 }
 
@@ -163,15 +168,15 @@ async function activeToken() {
   return requireSameAccount(expectedId)
 }
 
-async function protectedRequest<T>(path: string, method = 'GET', data?: object): Promise<T> {
+export async function protectedRequest<T>(path: string, method = 'GET', data?: object, binary = false): Promise<T> {
   const expectedId = snapshot.user?.id
   const token = await activeToken()
   try {
-    return await request<T>(path, method, data, token)
+    return await request<T>(path, method, data, token, binary)
   } catch (error) {
     if (method !== 'GET' || !(error instanceof ApiError) || error.status !== 401) throw error
     await restoreSession()
-    return request<T>(path, method, data, requireSameAccount(expectedId))
+    return request<T>(path, method, data, requireSameAccount(expectedId), binary)
   }
 }
 

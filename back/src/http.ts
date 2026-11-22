@@ -20,7 +20,7 @@ class ApiErrors implements ExceptionFilter {
     const status =
       error instanceof HttpException
         ? error.getStatus()
-        : prismaCode === 'P2002'
+        : ['P2002', 'P2003'].includes(prismaCode)
           ? 409
           : prismaCode === 'P2025'
             ? 404

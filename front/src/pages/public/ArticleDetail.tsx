@@ -7,6 +7,7 @@ import {
   articleAuthorLabel,
   articleCoverMediaId,
   getCategory,
+  getArticleBySlug,
   getMedia,
   getTag,
   publicBlocks,
@@ -23,10 +24,11 @@ import { buttonClasses } from '../../components/ui/form'
 
 /** Détail d'un article publié (§17) + commentaires (§28) */
 export function ArticleDetail() {
-  const db = useDb()
+  useDb()
   const { slug } = useParams()
   const location = useLocation()
-  const article = db.articles.find((a) => a.slug === slug && a.statut === 'publie')
+  const article = slug ? getArticleBySlug(slug) : undefined
+  const sessionUser = useCurrentUser()
 
   useEffect(() => {
     if (!article || !/^#commentaire-[\w-]+$/.test(location.hash)) return
@@ -65,8 +67,7 @@ export function ArticleDetail() {
 
   const coverId = articleCoverMediaId(article)
   const cover = getMedia(coverId)
-  const auteur = db.users.find((u) => u.id === article.auteurId)
-  const sessionUser = useCurrentUser()
+  const auteur = article.auteurId ? { id: article.auteurId } : undefined
   const compteActif = sessionUser?.statut === 'actif'
   const nbCommentaires = visibleComments(article.id).length
 
@@ -134,10 +135,10 @@ export function ArticleDetail() {
               Modifié le {formatDateTime(article.updatedAt)}
             </span>
           ) : null}
-          <span className="inline-flex items-center gap-1.5">
+          {article.viewCount !== undefined ? <span className="inline-flex items-center gap-1.5">
             <Eye aria-hidden="true" className="h-4 w-4" />
             {formatNombre(article.viewCount)} vues
-          </span>
+          </span> : null}
           <span className="inline-flex items-center gap-1.5">
             <MessageCircle aria-hidden="true" className="h-4 w-4" />
             {nbCommentaires} {nbCommentaires === 1 ? 'commentaire' : 'commentaires'}

@@ -1,7 +1,5 @@
 // ============================================================
-// Store central de la maquette : données fictives + mutations.
-// Simule le futur backend NestJS/Prisma sans implémenter de
-// véritable authentification ni de base de données.
+// Contenus reçus de l’API et données locales des modules encore en maquette.
 // ============================================================
 import { useSyncExternalStore } from 'react'
 import type {
@@ -19,12 +17,10 @@ import type {
   User,
   UserNotification,
 } from '../types'
-import { articlesSeed, initA3Draft, newBlockId } from '../data/articles'
+import { newBlockId } from '../data/articles'
 import { associationSeed } from '../data/divers'
-import { categoriesSeed, tagsSeed } from '../data/categories'
 import { commentsSeed } from '../data/comments'
 import { logsSeed, messagesSeed, notificationsSeed, statsSeed } from '../data/divers'
-import { mediasSeed } from '../data/medias'
 import { usersSeed } from '../data/users'
 
 export const MOTIFS_MODERATION = [
@@ -53,19 +49,17 @@ function clone<T>(value: T): T {
   return structuredClone(value)
 }
 
-initA3Draft()
+export type ContentSnapshot = Pick<Database, 'articles' | 'categories' | 'tags' | 'medias'>
+const emptyContent = (): ContentSnapshot => ({ articles: [], categories: [], tags: [], medias: [] })
+export const publicContent = emptyContent()
+let adminContent: ContentSnapshot | null = null
+export const contentStatus = { public: 'loading', admin: 'loading' } as Record<'public' | 'admin', 'loading' | 'ready' | 'error'>
 
-/** Grain de données « vierge » : les seeds, après initialisation de la version
- *  en préparation de l'article a3. Sert au premier chargement et à la
- *  réinitialisation des données de démonstration. */
 function freshDatabase(): Database {
   return {
+    ...emptyContent(),
     users: clone(usersSeed),
-    categories: clone(categoriesSeed),
-    tags: clone(tagsSeed),
-    articles: clone(articlesSeed),
     comments: clone(commentsSeed),
-    medias: clone(mediasSeed),
     messages: clone(messagesSeed),
     notifications: clone(notificationsSeed),
     logs: clone(logsSeed),
@@ -75,15 +69,9 @@ function freshDatabase(): Database {
 }
 
 // ------------------------------------------------------------
-// Persistance de la démonstration : les modifications de la maquette
-// survivent au rechargement de la page (brief §10). Les fichiers importés
-// en session (blob:/data:) ne sont pas persistés — quota de stockage.
+// Seules les données des modules encore en maquette sont conservées localement.
 // ------------------------------------------------------------
 const STORAGE_KEY = 'projetassos_demo_v2'
-
-function isPersistentMedia(m: Media): boolean {
-  return !(m.file.startsWith('blob:') || m.file.startsWith('data:'))
-}
 
 function loadPersisted(): Database | null {
   try {
@@ -94,7 +82,7 @@ function loadPersisted(): Database | null {
     if (!parsed || !Array.isArray(parsed.users) || !Array.isArray(parsed.articles) || !parsed.association) {
       return null
     }
-    return parsed
+    return { ...parsed, ...emptyContent() }
   } catch {
     return null
   }
@@ -102,12 +90,10 @@ function loadPersisted(): Database | null {
 
 function persist(): void {
   try {
-    const snapshot: Database = { ...db, medias: db.medias.filter(isPersistentMedia) }
+    const snapshot: Database = { ...db, ...emptyContent() }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot))
   } catch {
-    /* quota dépassé ou stockage indisponible : la maquette reste utilisable
-       en mémoire, les données de session (images importées) ne sont pas
-       conservées après rechargement */
+    // Si le stockage est indisponible, la maquette reste utilisable en mémoire.
   }
 }
 
@@ -118,9 +104,9 @@ export const db: Database = loadPersisted() ?? freshDatabase()
 // ------------------------------------------------------------
 let version = 0
 const listeners = new Set<() => void>()
-function emit() {
+function emit(save = true) {
   version += 1
-  persist()
+  if (save) persist()
   listeners.forEach((l) => l())
 }
 function subscribe(l: () => void) {
@@ -142,17 +128,27 @@ export function useDbVersion(): number {
   return version
 }
 
+export function setContent(scope: 'public' | 'admin', data?: ContentSnapshot) {
+  if (scope === 'admin') adminContent = data ?? null
+  else if (data) Object.assign(publicContent, data)
+  contentStatus[scope] = data ? 'ready' : 'loading'
+  Object.assign(db, adminContent ?? publicContent)
+  emit(false)
+}
+
+export function setContentError(scope: 'public' | 'admin') {
+  if (contentStatus[scope] === 'ready') return
+  contentStatus[scope] = 'error'
+  emit(false)
+}
+
 /** Réinitialisation des données de démonstration (brief §10) : toutes les
  *  modifications effectuées dans la maquette sont perdues, les seeds
  *  d'origine sont rétablis et la session est fermée. */
 export function resetDemoData(): void {
   const fresh = freshDatabase()
   db.users = fresh.users
-  db.categories = fresh.categories
-  db.tags = fresh.tags
-  db.articles = fresh.articles
   db.comments = fresh.comments
-  db.medias = fresh.medias
   db.messages = fresh.messages
   db.notifications = fresh.notifications
   db.logs = fresh.logs
@@ -180,16 +176,6 @@ export function now(): string {
 
 export function uid(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-export function slugify(text: string): string {
-  return text
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60)
 }
 
 export function fullName(u: User | null | undefined): string {
@@ -225,209 +211,6 @@ export function notify(
   link?: string,
 ): void {
   db.notifications.unshift({ id: uid('n'), userId, type, titre, texte, at: now(), lue: false, link })
-}
-
-// ------------------------------------------------------------
-// Articles (§17 à §22)
-// ------------------------------------------------------------
-function nextArticleSlug(titre: string): string {
-  const base = slugify(titre) || 'article'
-  let slug = base
-  let n = 2
-  while (db.articles.some((a) => a.slug === slug)) {
-    slug = `${base}-${n++}`
-  }
-  return slug
-}
-
-export function createArticle(
-  auteurId: string,
-  data: Partial<Pick<Article, 'titre' | 'blocks' | 'categorieIds' | 'tagIds' | 'coverMediaId'>>,
-): Article {
-  const a: Article = {
-    id: uid('a'),
-    slug: nextArticleSlug(data.titre || 'nouvel-article'),
-    titre: data.titre || 'Article sans titre',
-    statut: 'brouillon',
-    auteurId,
-    createdAt: now(),
-    publishedAt: null,
-    programmeAt: null,
-    updatedAt: now(),
-    coverMediaId: data.coverMediaId ?? null,
-    categorieIds: data.categorieIds ?? [],
-    tagIds: data.tagIds ?? [],
-    blocks: data.blocks ?? [{ id: newBlockId(), type: 'paragraphe', text: '' }],
-    publicSnapshot: null,
-    misEnAvant: false,
-    viewCount: 0,
-  }
-  db.articles.unshift(a)
-  emit()
-  return a
-}
-
-export function updateArticle(
-  id: string,
-  patch: Partial<Pick<Article, 'titre' | 'blocks' | 'categorieIds' | 'tagIds' | 'coverMediaId' | 'misEnAvant'>>,
-): void {
-  const a = db.articles.find((x) => x.id === id)
-  if (!a) return
-  Object.assign(a, patch)
-  a.updatedAt = now()
-  emit()
-}
-
-/** Publication immédiate (§20) */
-export function publishNow(id: string, adminId: string): void {
-  const a = db.articles.find((x) => x.id === id)
-  if (!a) return
-  const etaitProgramme = a.statut === 'programme'
-  a.statut = 'publie'
-  a.publishedAt = a.publishedAt ?? now()
-  a.programmeAt = null
-  a.updatedAt = now()
-  logAction(adminId, 'article', etaitProgramme ? 'Publication anticipée d\'un article programmé' : 'Publication immédiate', a.titre)
-  emit()
-}
-
-/** Programmation d'une publication (§20) */
-export function programArticle(id: string, isoDate: string, adminId: string): void {
-  const a = db.articles.find((x) => x.id === id)
-  if (!a) return
-  a.statut = 'programme'
-  a.programmeAt = isoDate
-  a.updatedAt = now()
-  logAction(adminId, 'article', 'Programmation d\'un article', a.titre)
-  emit()
-}
-
-/** Annulation d'une programmation : retour en Brouillon (§20) */
-export function cancelProgramming(id: string, adminId: string): void {
-  const a = db.articles.find((x) => x.id === id)
-  if (!a) return
-  a.statut = 'brouillon'
-  a.programmeAt = null
-  a.updatedAt = now()
-  logAction(adminId, 'article', 'Annulation d\'une programmation', a.titre)
-  emit()
-}
-
-/** Retrait de la publication d'un article publié (§20) */
-export function unpublish(id: string, adminId: string): void {
-  const a = db.articles.find((x) => x.id === id)
-  if (!a) return
-  a.statut = 'brouillon'
-  a.publishedAt = null
-  a.updatedAt = now()
-  logAction(adminId, 'article', 'Retrait de la publication', a.titre)
-  emit()
-}
-
-/** Début de modification d'un article publié : la version publiée reste
- *  visible, les modifications sont préparées en brouillon (§20) */
-export function startEditPublished(id: string): void {
-  const a = db.articles.find((x) => x.id === id)
-  if (!a || a.statut !== 'publie' || a.publicSnapshot) return
-  a.publicSnapshot = clone(a.blocks)
-  emit()
-}
-
-export function cancelEditPublished(id: string): void {
-  const a = db.articles.find((x) => x.id === id)
-  if (!a || !a.publicSnapshot) return
-  a.blocks = a.publicSnapshot
-  a.publicSnapshot = null
-  emit()
-}
-
-/** Validation de la nouvelle version d'un article publié (§20) */
-export function validatePublishedEdit(id: string, adminId: string): void {
-  const a = db.articles.find((x) => x.id === id)
-  if (!a || !a.publicSnapshot) return
-  a.publicSnapshot = null
-  a.updatedAt = now()
-  logAction(adminId, 'article', 'Validation de la nouvelle version d\'un article publié', a.titre)
-  emit()
-}
-
-/** Mise à la corbeille (§21). Un article programmé y passe après
- *  confirmation et sa programmation est annulée. */
-export function trashArticle(id: string, adminId: string): void {
-  const a = db.articles.find((x) => x.id === id)
-  if (!a) return
-  const etaitProgramme = a.statut === 'programme'
-  a.statut = 'corbeille'
-  a.programmeAt = null
-  a.updatedAt = now()
-  logAction(adminId, 'article', etaitProgramme ? 'Mise à la corbeille d\'un article programmé' : 'Mise à la corbeille', a.titre)
-  emit()
-}
-
-/** Restauration depuis la corbeille : choix entre Brouillon et Publié (§21) */
-export function restoreArticle(id: string, target: 'brouillon' | 'publie', adminId: string): void {
-  const a = db.articles.find((x) => x.id === id)
-  if (!a) return
-  a.statut = target === 'publie' ? 'publie' : 'brouillon'
-  a.publishedAt = target === 'publie' ? now() : null
-  a.programmeAt = null
-  a.updatedAt = now()
-  logAction(adminId, 'article', `Restauration depuis la corbeille (cible : ${target === 'publie' ? 'Publié' : 'Brouillon'})`, a.titre)
-  emit()
-}
-
-/** Suppression définitive : les commentaires associés sont supprimés (§21) */
-export function deleteArticleForever(id: string, adminId: string): void {
-  const a = db.articles.find((x) => x.id === id)
-  if (!a) return
-  db.articles = db.articles.filter((x) => x.id !== id)
-  db.comments = db.comments.filter((c) => c.articleId !== id)
-  logAction(adminId, 'article', 'Suppression définitive', a.titre, 'Les commentaires associés ont été supprimés.')
-  emit()
-}
-
-// ------------------------------------------------------------
-// Catégories et tags (§23)
-// ------------------------------------------------------------
-export function createCategory(nom: string): Category {
-  const c: Category = { id: uid('c'), nom: nom.trim(), slug: slugify(nom) }
-  db.categories.push(c)
-  emit()
-  return c
-}
-export function updateCategory(id: string, nom: string): void {
-  const c = db.categories.find((x) => x.id === id)
-  if (!c) return
-  c.nom = nom.trim()
-  c.slug = slugify(nom)
-  emit()
-}
-export function deleteCategory(id: string): void {
-  db.categories = db.categories.filter((x) => x.id !== id)
-  db.articles.forEach((a) => {
-    a.categorieIds = a.categorieIds.filter((cid) => cid !== id)
-  })
-  emit()
-}
-export function createTag(nom: string): Tag {
-  const t: Tag = { id: uid('t'), nom: nom.trim(), slug: slugify(nom) }
-  db.tags.push(t)
-  emit()
-  return t
-}
-export function updateTag(id: string, nom: string): void {
-  const t = db.tags.find((x) => x.id === id)
-  if (!t) return
-  t.nom = nom.trim()
-  t.slug = slugify(nom)
-  emit()
-}
-export function deleteTag(id: string): void {
-  db.tags = db.tags.filter((x) => x.id !== id)
-  db.articles.forEach((a) => {
-    a.tagIds = a.tagIds.filter((tid) => tid !== id)
-  })
-  emit()
 }
 
 // ------------------------------------------------------------
@@ -685,67 +468,6 @@ export function deleteNotification(id: string): void {
 }
 export function deleteAllNotifications(userId: string): void {
   db.notifications = db.notifications.filter((n) => n.userId !== userId)
-  emit()
-}
-
-// ------------------------------------------------------------
-// Médiathèque (§36)
-// ------------------------------------------------------------
-export interface MediaUsage {
-  articles: string[]
-  avatars: number
-  association: boolean
-}
-
-export function mediaUsage(mediaId: string): MediaUsage {
-  const usage: MediaUsage = { articles: [], avatars: 0, association: false }
-  const blocksUse = (blocks: Block[] | null | undefined): boolean =>
-    (blocks ?? []).some((bl) => bl.mediaId === mediaId)
-  db.articles.forEach((a) => {
-    if (
-      a.coverMediaId === mediaId ||
-      blocksUse(a.blocks) ||
-      blocksUse(a.publicSnapshot)
-    ) {
-      usage.articles.push(a.titre)
-    }
-  })
-  usage.avatars = db.users.filter((u) => u.avatar.type === 'image' && u.avatar.mediaId === mediaId).length
-  usage.association = blocksUse(db.association.blocks)
-  return usage
-}
-
-export function isMediaUsed(mediaId: string): boolean {
-  const u = mediaUsage(mediaId)
-  return u.articles.length > 0 || u.avatars > 0 || u.association
-}
-
-export function addMedia(data: Omit<Media, 'id' | 'createdAt'>): Media {
-  const m: Media = { id: uid('m'), ...data, createdAt: now() }
-  db.medias.unshift(m)
-  emit()
-  return m
-}
-
-export function updateMedia(id: string, patch: Partial<Pick<Media, 'nom' | 'alt'>>): void {
-  const m = db.medias.find((x) => x.id === id)
-  if (!m) return
-  Object.assign(m, patch)
-  emit()
-}
-
-/** Remplacement du fichier d'un média : l'identifiant est conservé, tous
- *  les contenus qui utilisent l'image sont mis à jour (§36) */
-export function replaceMediaFile(id: string, nouveauFichier: string): void {
-  const m = db.medias.find((x) => x.id === id)
-  if (!m) return
-  m.file = nouveauFichier
-  emit()
-}
-
-export function deleteMedia(id: string): void {
-  if (isMediaUsed(id)) return // la suppression d'un média utilisé est bloquée (§36)
-  db.medias = db.medias.filter((x) => x.id !== id)
   emit()
 }
 

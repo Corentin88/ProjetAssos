@@ -164,7 +164,7 @@ export function AdminLayout() {
   const onReset = () => {
     resetDemoData()
     setResetOuvert(false)
-    toast('Données de démonstration réinitialisées : toutes les modifications ont été perdues.', 'info')
+    toast('Données de démonstration réinitialisées.', 'info')
     navigate('/admin')
   }
 
@@ -324,10 +324,9 @@ export function AdminLayout() {
         confirmLabel="Réinitialiser les données"
       >
         <p>
-          Toutes les modifications effectuées dans la maquette (articles créés ou modifiés,
-          commentaires, comptes, messages, page de l'association…) seront <strong>définitivement
-          perdues</strong> et les données de démonstration d'origine rétablies. Votre session
-          reste ouverte.
+          Les modifications des modules de démonstration (commentaires, comptes, messages,
+          page de l'association…) seront <strong>définitivement perdues</strong>. Les données de
+          démonstration d'origine seront rétablies. Votre session reste ouverte.
         </p>
       </ConfirmDialog>
     </div>

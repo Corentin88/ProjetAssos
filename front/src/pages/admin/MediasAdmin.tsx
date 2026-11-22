@@ -1,19 +1,9 @@
-import { useCurrentUser } from '../../lib/auth'
-import { useMemo, useState } from 'react'
+import { ContentImage } from '../../components/content/ContentImage'
+import { useEffect, useMemo, useState } from 'react'
 import { Images, Import, Pencil, Search, Trash2 } from 'lucide-react'
 import type { Media } from '../../types'
-import {
-  addMedia,
-  db,
-  deleteMedia,
-  isMediaUsed,
-  logAction,
-  mediaUsage,
-  replaceMediaFile,
-  updateMedia,
-  useDb,
-  useDbVersion,
-} from '../../lib/db'
+import { db, useDbVersion } from '../../lib/db'
+import { removeMedia, replaceMedia, saveMediaMetadata, uploadMedia, useContentAction } from '../../lib/content'
 import { formatDate, formatTaille } from '../../lib/format'
 import { mediaUrl } from '../../lib/assets'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
@@ -24,31 +14,27 @@ import { useToast } from '../../hooks/useToast'
 
 const FORMATS_ACCEPTES = "JPG, JPEG, PNG, WebP (le SVG n'est pas prévu pour la V1)"
 
-// Pool d'images de démonstration utilisées par l'import simulé
-const FICHIERS_DEMO = [
-  'village-arches.jpg',
-  'fete-village.jpg',
-  'marche-producteurs.jpg',
-  'atelier-memoire.jpg',
-  'bibliotheque.jpg',
-  'repas-assoc.jpg',
-  'theatre.jpg',
-]
+const mediaUsage = (id: string) => db.medias.find(media => media.id === id)?.usage
+  ?? { articles: [], avatars: 0, association: false }
+
+function totalUsages(id: string) {
+  const usage = mediaUsage(id)
+  return usage.articles.length + usage.avatars + (usage.association ? 1 : 0)
+}
 
 /** Médiathèque (§36) : import, recherche, remplacement, suppression avec
  *  vérification d'usage, métadonnées et texte alternatif */
 export function MediasAdmin() {
-  useDb()
   const version = useDbVersion()
   const { toast } = useToast()
-  const admin = useCurrentUser()
-  const adminId = admin?.id ?? 'u1'
+  const effectuer = useContentAction()
 
   const [recherche, setRecherche] = useState('')
   const [importOuvert, setImportOuvert] = useState(false)
   const [aEditer, setAEditer] = useState<Media | null>(null)
   const [edition, setEdition] = useState({ nom: '', alt: '' })
   const [aRemplacer, setARemplacer] = useState<Media | null>(null)
+  const [fichierRemplacement, setFichierRemplacement] = useState<File | null>(null)
   const [aSupprimer, setASupprimer] = useState<Media | null>(null)
 
   const medias = useMemo(() => {
@@ -62,7 +48,7 @@ export function MediasAdmin() {
   }, [version, recherche])
 
   const usage = aSupprimer ? mediaUsage(aSupprimer.id) : null
-  const utilise = aSupprimer ? isMediaUsed(aSupprimer.id) : false
+  const utilise = aSupprimer ? totalUsages(aSupprimer.id) > 0 : false
 
   return (
     <>
@@ -115,7 +101,7 @@ export function MediasAdmin() {
               const nbUsages = u.articles.length + u.avatars + (u.association ? 1 : 0)
               return (
                 <li key={m.id} className="overflow-hidden rounded-2xl border border-line bg-white">
-                  <img
+                  <ContentImage
                     src={mediaUrl(m.file)}
                     alt={m.alt}
                     className="h-44 w-full object-cover"
@@ -147,7 +133,10 @@ export function MediasAdmin() {
                         <Pencil aria-hidden="true" className="h-4 w-4" />
                         Modifier
                       </Button>
-                      <Button size="petit" variant="fantome" onClick={() => setARemplacer(m)}>
+                      <Button size="petit" variant="fantome" onClick={() => {
+                        setFichierRemplacement(null)
+                        setARemplacer(m)
+                      }}>
                         Remplacer le fichier
                       </Button>
                       <Button size="petit" variant="danger" onClick={() => setASupprimer(m)}>
@@ -163,16 +152,14 @@ export function MediasAdmin() {
         )}
       </div>
 
-      {/* Import (maquette : choix d'un fichier local ou d'un visuel de démonstration) */}
       <ImportMediaModal
         open={importOuvert}
         onClose={() => setImportOuvert(false)}
-        onImport={(nom, tailleKo, format, alt, file) => {
-          addMedia({ file, nom, tailleKo, format, alt, largeur: 1600, hauteur: 1067 })
-          logAction(adminId, 'media', 'Import d\'un média', nom)
+        onImport={(file, nom, alt) => effectuer(async () => {
+          await uploadMedia(file, nom, alt)
           toast('Image importée dans la médiathèque.')
           setImportOuvert(false)
-        }}
+        })}
       />
 
       {/* Modification des métadonnées */}
@@ -186,14 +173,13 @@ export function MediasAdmin() {
               Annuler
             </Button>
             <Button
-              onClick={() => {
+              onClick={() => effectuer(async () => {
                 if (aEditer) {
-                  updateMedia(aEditer.id, { nom: edition.nom.trim() || aEditer.nom, alt: edition.alt.trim() })
-                  logAction(adminId, 'media', 'Modification des métadonnées d\'un média', edition.nom.trim() || aEditer.nom)
+                  await saveMediaMetadata(aEditer.id, edition.nom.trim() || aEditer.nom, edition.alt.trim())
                   toast('Métadonnées enregistrées : nom du fichier et texte alternatif mis à jour.')
                   setAEditer(null)
                 }
-              }}
+              })}
             >
               Enregistrer
             </Button>
@@ -219,15 +205,15 @@ export function MediasAdmin() {
       <ConfirmDialog
         open={!!aRemplacer}
         onClose={() => setARemplacer(null)}
-        onConfirm={() => {
-          if (aRemplacer) {
-            const demo = FICHIERS_DEMO[Math.floor(Math.random() * FICHIERS_DEMO.length)]
-            replaceMediaFile(aRemplacer.id, demo)
-            logAction(adminId, 'media', 'Remplacement du fichier d\'un média', aRemplacer.nom)
+        onConfirm={() => effectuer(async () => {
+          if (aRemplacer && fichierRemplacement) {
+            await replaceMedia(aRemplacer.id, fichierRemplacement)
             toast('Fichier remplacé : les contenus qui utilisent cette image affichent automatiquement la nouvelle version.')
             setARemplacer(null)
+          } else if (aRemplacer) {
+            toast('Choisissez le fichier de remplacement.', 'erreur')
           }
-        }}
+        })}
         title="Remplacer le fichier de cette image ?"
         confirmLabel="Remplacer le fichier"
         destructive={false}
@@ -235,32 +221,30 @@ export function MediasAdmin() {
         <p>
           L'image « {aRemplacer?.nom} » est utilisée à{' '}
           <strong>
-            {aRemplacer
-              ? (() => {
-                  const u = mediaUsage(aRemplacer.id)
-                  return u.articles.length + u.avatars + (u.association ? 1 : 0)
-                })()
-              : 0}{' '}
+            {aRemplacer ? totalUsages(aRemplacer.id) : 0}{' '}
             endroit(s)
           </strong>
           . Le remplacement met à jour tous ces endroits automatiquement (l'identifiant de
-          l'image est conservé). En production, le nouveau fichier devra respecter les formats et
-          limites définis dans les spécifications techniques.
+          l'image est conservé).
         </p>
+        <Field label="Fichier de remplacement" htmlFor="remplacement-image" hint="JPEG, PNG ou WebP. 8 Mio maximum.">
+          <input id="remplacement-image" type="file" accept="image/jpeg,image/png,image/webp"
+            onChange={event => setFichierRemplacement(event.target.files?.[0] ?? null)}
+            className="mt-2 w-full rounded-xl border border-line bg-white p-3" />
+        </Field>
       </ConfirmDialog>
 
       {/* Suppression avec vérification d'usage (§36) */}
       <ConfirmDialog
         open={!!aSupprimer}
         onClose={() => setASupprimer(null)}
-        onConfirm={() => {
+        onConfirm={() => effectuer(async () => {
           if (aSupprimer && !utilise) {
-            deleteMedia(aSupprimer.id)
-            logAction(adminId, 'media', 'Suppression d\'un média', aSupprimer.nom)
+            await removeMedia(aSupprimer.id)
             toast('Image supprimée de la médiathèque.', 'info')
           }
           setASupprimer(null)
-        }}
+        })}
         title="Supprimer cette image ?"
         confirmLabel="Supprimer l'image"
       >
@@ -292,21 +276,26 @@ function ImportMediaModal({
 }: {
   open: boolean
   onClose: () => void
-  onImport: (nom: string, tailleKo: number, format: 'JPG' | 'PNG' | 'WebP', alt: string, file: string) => void
+  onImport: (image: File, nom: string, alt: string) => Promise<void>
 }) {
   const [fichier, setFichier] = useState<File | null>(null)
   const [nom, setNom] = useState('')
   const [alt, setAlt] = useState('')
   const [erreur, setErreur] = useState('')
-
-  const importerFichierDemo = () => {
-    const demo = FICHIERS_DEMO[Math.floor(Math.random() * FICHIERS_DEMO.length)]
-    onImport(demo, 180 + Math.floor(Math.random() * 200), 'JPG', alt.trim() || 'Image de démonstration importée', demo)
+  const [apercu, setApercu] = useState<string>()
+  useEffect(() => {
+    if (!fichier) { setApercu(undefined); return }
+    const url = URL.createObjectURL(fichier)
+    setApercu(url)
+    return () => URL.revokeObjectURL(url)
+  }, [fichier])
+  useEffect(() => {
+    if (open) return
     setFichier(null)
     setNom('')
     setAlt('')
     setErreur('')
-  }
+  }, [open])
 
   return (
     <Modal
@@ -321,20 +310,15 @@ function ImportMediaModal({
           <Button
             onClick={() => {
               if (!fichier) {
-                setErreur("Choisissez d'abord un fichier image (ou utilisez un visuel de démonstration).")
+                setErreur("Choisissez d'abord un fichier image.")
                 return
               }
               if (!alt.trim()) {
                 setErreur('Le texte alternatif est obligatoire pour l\'accessibilité.')
                 return
               }
-              const format =
-                fichier.type === 'image/png' ? 'PNG' : fichier.type === 'image/webp' ? 'WebP' : 'JPG'
-              onImport(nom.trim() || fichier.name, Math.max(1, Math.round(fichier.size / 1024)), format, alt.trim(), URL.createObjectURL(fichier))
-              setFichier(null)
-              setNom('')
-              setAlt('')
               setErreur('')
+              void onImport(fichier, nom.trim() || fichier.name, alt.trim())
             }}
           >
             Importer
@@ -352,7 +336,7 @@ function ImportMediaModal({
             label="Fichier image"
             htmlFor="import-fichier"
             required
-            hint={`Formats acceptés : ${FORMATS_ACCEPTES}. La taille maximale sera définie dans les spécifications techniques.`}
+            hint={`Formats acceptés : ${FORMATS_ACCEPTES}. 8 Mio maximum.`}
           >
             <input
               id="import-fichier"
@@ -362,9 +346,9 @@ function ImportMediaModal({
               className="w-full rounded-xl border border-line bg-white p-3 text-[1rem]"
             />
           </Field>
-          {fichier ? (
+          {fichier && apercu ? (
             <img
-              src={URL.createObjectURL(fichier)}
+              src={apercu}
               alt={`Aperçu du fichier choisi : ${fichier.name}`}
               className="h-40 w-full rounded-xl border border-line object-cover"
             />
@@ -375,17 +359,6 @@ function ImportMediaModal({
           <Field label="Texte alternatif (obligatoire)" htmlFor="import-alt" required>
             <Textarea id="import-alt" value={alt} onChange={(e) => setAlt(e.target.value)} rows={2} />
           </Field>
-          <div className="rounded-xl bg-sand p-4 text-[0.9375rem] text-mist">
-            <p className="font-bold text-bark">Maquette</p>
-            <p className="mt-1">
-              Sans fichier sous la main, vous pouvez importer un visuel de démonstration :
-            </p>
-            <div className="mt-3">
-              <Button size="petit" variant="secondaire" onClick={importerFichierDemo}>
-                Importer un visuel de démonstration
-              </Button>
-            </div>
-          </div>
         </div>
       </Modal>
   )

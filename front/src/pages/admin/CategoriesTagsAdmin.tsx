@@ -1,27 +1,17 @@
-import { useCurrentUser } from '../../lib/auth'
 import { useState } from 'react'
 import { Pencil, Plus, Tag, Tags as TagsIcon, Trash2 } from 'lucide-react'
-import {
-  createCategory,
-  createTag,
-  db,
-  deleteCategory,
-  deleteTag,
-  logAction,
-  updateCategory,
-  updateTag,
-  useDb,
-} from '../../lib/db'
+import { db, useDb } from '../../lib/db'
+import { deleteClassification, saveClassification, useContentAction } from '../../lib/content'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
 import { Button, Field, Input } from '../../components/ui/form'
 import { ConfirmDialog } from '../../components/ui/overlay'
 import { useToast } from '../../hooks/useToast'
 
 function nbArticlesCategorie(id: string): number {
-  return db.articles.filter((a) => a.categorieIds.includes(id)).length
+  return db.categories.find(item => item.id === id)?.articleCount ?? 0
 }
 function nbArticlesTag(id: string): number {
-  return db.articles.filter((a) => a.tagIds.includes(id)).length
+  return db.tags.find(item => item.id === id)?.articleCount ?? 0
 }
 
 /** Gestion des catégories et des tags (§23) : création, modification,
@@ -29,8 +19,7 @@ function nbArticlesTag(id: string): number {
 export function CategoriesTagsAdmin() {
   useDb()
   const { toast } = useToast()
-  const admin = useCurrentUser()
-  const adminId = admin?.id ?? 'u1'
+  const effectuer = useContentAction()
 
   const [nouvelleCat, setNouvelleCat] = useState('')
   const [nouveauTag, setNouveauTag] = useState('')
@@ -57,10 +46,11 @@ export function CategoriesTagsAdmin() {
             onSubmit={(e) => {
               e.preventDefault()
               if (!nouvelleCat.trim()) return
-              createCategory(nouvelleCat)
-              logAction(adminId, 'categorie', 'Création d\'une catégorie', nouvelleCat.trim())
+              void effectuer(async () => {
+                await saveClassification('categories', nouvelleCat)
               toast('Catégorie créée.')
               setNouvelleCat('')
+              })
             }}
           >
             <Field label="Nouvelle catégorie" htmlFor="nouvelle-cat" required className="flex-1">
@@ -86,10 +76,11 @@ export function CategoriesTagsAdmin() {
                       className="flex flex-wrap items-end gap-3"
                       onSubmit={(e) => {
                         e.preventDefault()
-                        updateCategory(c.id, editionCat.nom)
-                        logAction(adminId, 'categorie', 'Modification d\'une catégorie', editionCat.nom)
+                        void effectuer(async () => {
+                await saveClassification('categories', editionCat.nom, c.id)
                         toast('Catégorie modifiée.')
                         setEditionCat(null)
+              })
                       }}
                     >
                       <Field label="Nom de la catégorie" htmlFor={`cat-${c.id}`} className="flex-1">
@@ -139,10 +130,11 @@ export function CategoriesTagsAdmin() {
             onSubmit={(e) => {
               e.preventDefault()
               if (!nouveauTag.trim()) return
-              createTag(nouveauTag)
-              logAction(adminId, 'tag', 'Création d\'un tag', nouveauTag.trim())
+              void effectuer(async () => {
+                await saveClassification('tags', nouveauTag)
               toast('Tag créé.')
               setNouveauTag('')
+              })
             }}
           >
             <Field label="Nouveau tag" htmlFor="nouveau-tag" required className="flex-1">
@@ -168,10 +160,11 @@ export function CategoriesTagsAdmin() {
                       className="flex flex-wrap items-end gap-3"
                       onSubmit={(e) => {
                         e.preventDefault()
-                        updateTag(t.id, editionTag.nom)
-                        logAction(adminId, 'tag', 'Modification d\'un tag', editionTag.nom)
+                        void effectuer(async () => {
+                await saveClassification('tags', editionTag.nom, t.id)
                         toast('Tag modifié.')
                         setEditionTag(null)
+              })
                       }}
                     >
                       <Field label="Nom du tag" htmlFor={`tag-${t.id}`} className="flex-1">
@@ -215,15 +208,14 @@ export function CategoriesTagsAdmin() {
       <ConfirmDialog
         open={!!aSupprimerCat}
         onClose={() => setASupprimerCat(null)}
-        onConfirm={() => {
+        onConfirm={() => effectuer(async () => {
           if (aSupprimerCat) {
             const n = nbArticlesCategorie(aSupprimerCat.id)
-            deleteCategory(aSupprimerCat.id)
-            logAction(adminId, 'categorie', 'Suppression d\'une catégorie', aSupprimerCat.nom, `${n} article(s) dissocié(s) automatiquement`)
+            await deleteClassification('categories', aSupprimerCat.id)
             toast(`Catégorie supprimée : ${n} article(s) dissocié(s) automatiquement. Les articles sont conservés.`, 'info')
           }
           setASupprimerCat(null)
-        }}
+        })}
         title="Supprimer cette catégorie ?"
         confirmLabel="Supprimer la catégorie"
       >
@@ -238,15 +230,14 @@ export function CategoriesTagsAdmin() {
       <ConfirmDialog
         open={!!aSupprimerTag}
         onClose={() => setASupprimerTag(null)}
-        onConfirm={() => {
+        onConfirm={() => effectuer(async () => {
           if (aSupprimerTag) {
             const n = nbArticlesTag(aSupprimerTag.id)
-            deleteTag(aSupprimerTag.id)
-            logAction(adminId, 'tag', 'Suppression d\'un tag', aSupprimerTag.nom, `${n} article(s) dissocié(s) automatiquement`)
+            await deleteClassification('tags', aSupprimerTag.id)
             toast(`Tag supprimé : ${n} article(s) dissocié(s) automatiquement. Les articles sont conservés.`, 'info')
           }
           setASupprimerTag(null)
-        }}
+        })}
         title="Supprimer ce tag ?"
         confirmLabel="Supprimer le tag"
       >

@@ -1,4 +1,5 @@
-import { useCurrentUser } from '../../lib/auth'
+import { ContentImage } from '../../components/content/ContentImage'
+import { ApiError } from '../../lib/auth'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
@@ -13,21 +14,9 @@ import {
   X,
 } from 'lucide-react'
 import type { Article } from '../../types'
-import {
-  cancelEditPublished,
-  cancelProgramming,
-  createArticle,
-  db,
-  logAction,
-  programArticle,
-  publishNow,
-  startEditPublished,
-  trashArticle,
-  updateArticle,
-  useDb,
-  validatePublishedEdit,
-} from '../../lib/db'
-import { getMedia } from '../../lib/selectors'
+import { db, useDb } from '../../lib/db'
+import { articleAction, saveArticle, useContentAction } from '../../lib/content'
+import { articleAuthorLabel, getMedia } from '../../lib/selectors'
 import { toInputDateTime, formatDateTime } from '../../lib/format'
 import { mediaUrl } from '../../lib/assets'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
@@ -40,8 +29,6 @@ import { ConfirmDialog } from '../../components/ui/overlay'
 import { Alert } from '../../components/ui/feedback'
 import { useToast } from '../../hooks/useToast'
 
-const MAX_TAGS = 4 // point à confirmer (§46) : nombre maximal de tags
-
 /** Éditeur d'article basé sur les blocs (§18) + workflow de publication (§20).
  *  Ergonomie (brief V3 §4) : zone centrale dédiée au titre et au contenu,
  *  barre d'actions collante toujours accessible, panneau latéral de
@@ -49,11 +36,18 @@ const MAX_TAGS = 4 // point à confirmer (§46) : nombre maximal de tags
 export function ArticleEditor() {
   useDb()
   const { id } = useParams()
+  const existant = id ? db.articles.find((a) => a.id === id) : undefined
+  if (id && !existant) {
+    return <div className="mx-auto max-w-3xl px-4 py-16"><Alert kind="erreur" title="Article introuvable" /></div>
+  }
+  return <ArticleForm key={id ?? 'nouveau'} existant={existant} />
+}
+
+function ArticleForm({ existant }: { existant?: Article }) {
   const navigate = useNavigate()
   const { toast } = useToast()
-  const nouveau = !id
-
-  const existant = id ? db.articles.find((a) => a.id === id) : undefined
+  const effectuer = useContentAction()
+  const nouveau = !existant
 
   // État local du formulaire
   const [titre, setTitre] = useState(existant?.titre ?? '')
@@ -61,7 +55,6 @@ export function ArticleEditor() {
   const [categorieIds, setCategorieIds] = useState<string[]>(existant?.categorieIds ?? [])
   const [tagIds, setTagIds] = useState<string[]>(existant?.tagIds ?? [])
   const [coverMediaId, setCoverMediaId] = useState<string | null>(existant?.coverMediaId ?? null)
-  const [misEnAvant, setMisEnAvant] = useState(existant?.misEnAvant ?? false)
   const [pickerCouverture, setPickerCouverture] = useState(false)
   const [dateProgrammation, setDateProgrammation] = useState(
     existant?.programmeAt ? toInputDateTime(existant.programmeAt) : '',
@@ -70,52 +63,56 @@ export function ArticleEditor() {
   /** Panneau de paramètres : replié par défaut sur mobile, toujours visible sur ordinateur */
   const [parametresOuverts, setParametresOuverts] = useState(false)
 
-  const admin = useCurrentUser()
-  const adminId = admin?.id ?? 'u1'
-
-  // Règle §20 : ouvrir l'éditeur d'un article publié sans modifications en
-  // cours prépare automatiquement une nouvelle version en brouillon
-  if (existant && existant.statut === 'publie' && !existant.publicSnapshot) {
-    startEditPublished(existant.id)
-  }
-
   const enCorbeille = existant?.statut === 'corbeille'
 
-  const enregistrer = (patch?: { titre?: string }) => {
-    if (nouveau) {
-      const a = createArticle(adminId, { titre, blocks, categorieIds, tagIds, coverMediaId })
-      logAction(adminId, 'article', 'Création d\'un brouillon d\'article', titre || 'Article sans titre')
-      toast('Brouillon créé : pensez à le compléter avant publication.')
-      navigate(`/admin/articles/${a.id}`, { replace: true })
+  const sauver = () => {
+    if (blocks.some(block => block.type === 'image' && (!block.mediaId || !block.alt?.trim()))) {
+      throw new ApiError(400, 'Sélectionnez une image et renseignez son texte alternatif dans chaque bloc image.')
+    }
+    return saveArticle({ titre, blocks, categorieIds, tagIds, coverMediaId }, existant?.id)
+  }
+  const enregistrer = () => effectuer(async () => {
+    const article = await sauver()
+    if (nouveau) navigate(`/admin/articles/${article.id}`, { replace: true })
+    toast(existant?.statut === 'publie'
+      ? 'Version de travail enregistrée. La version publique reste visible.'
+      : 'Article enregistré.')
+  })
+  const previsualiser = () => effectuer(async () => {
+    const article = await sauver()
+    navigate(`/admin/articles/${article.id}/preview`)
+  })
+  const publier = () => effectuer(async () => {
+    if (!titre.trim()) throw new ApiError(400, 'Donnez un titre à l’article avant publication.')
+    const article = await sauver()
+    if (nouveau) navigate(`/admin/articles/${article.id}`, { replace: true })
+    await articleAction(article.id, 'publish')
+    toast('Article publié.')
+  })
+  const annuler = () => effectuer(async () => {
+    if (!existant) return
+    const article = existant.publicSnapshot
+      ? await articleAction(existant.id, 'discard-work', { confirmed: true }) : existant
+    if (!article) return
+    setTitre(article.titre)
+    setBlocks(article.blocks)
+    setCategorieIds(article.categorieIds)
+    setTagIds(article.tagIds)
+    setCoverMediaId(article.coverMediaId)
+    toast('Modifications annulées. La version publique reste inchangée.', 'info')
+  })
+  const programmer = (sauverAvant: boolean) => effectuer(async () => {
+    if (!existant || !dateProgrammation) {
+      toast('Choisissez une date de publication.', 'erreur')
       return
     }
-    if (!existant) return
-    updateArticle(existant.id, {
-      titre: patch?.titre ?? titre,
-      blocks,
-      categorieIds,
-      tagIds,
-      coverMediaId,
-      misEnAvant,
-    })
-    logAction(
-      adminId,
-      'article',
-      existant.statut === 'publie'
-        ? 'Modification d\'un article publié (version en préparation)'
-        : existant.statut === 'programme'
-          ? 'Modification d\'un article programmé (date de publication inchangée)'
-          : 'Enregistrement du brouillon',
-      (patch?.titre ?? titre) || 'Article sans titre',
-    )
-    toast(
-      existant.statut === 'publie'
-        ? 'Nouvelle version enregistrée : la version publique reste visible tant que vous ne la validez pas.'
-        : existant.statut === 'programme'
-          ? 'Modifications enregistrées. La date et l\'heure de publication prévues restent inchangées.'
-          : 'Brouillon enregistré.',
-    )
-  }
+    if (sauverAvant) {
+      if (!titre.trim()) throw new ApiError(400, 'Donnez un titre à l’article avant de le programmer.')
+      await sauver()
+    }
+    await articleAction(existant.id, 'schedule', { at: new Date(dateProgrammation).toISOString() })
+    toast('Programmation enregistrée.')
+  })
 
   const cover = coverMediaId ? getMedia(coverMediaId) : undefined
 
@@ -155,34 +152,23 @@ export function ArticleEditor() {
             <Button
               size="petit"
               variant="secondaire"
-              onClick={() => {
-                enregistrer()
-                if (!nouveau) navigate(`/admin/articles/${existant?.id}/preview`)
-              }}
+              onClick={previsualiser}
             >
               <Eye aria-hidden="true" className="h-4 w-4" />
               Prévisualiser
             </Button>
-            {existant?.publicSnapshot ? (
+            {existant?.statut === 'publie' ? (
               <>
                 <Button
                   size="petit"
-                  onClick={() => {
-                    enregistrer()
-                    validatePublishedEdit(existant.id, adminId)
-                    toast('La nouvelle version est publiée : elle remplace la version précédente, qui n\'est plus conservée.')
-                  }}
+                  onClick={publier}
                 >
                   Valider la nouvelle version
                 </Button>
                 <Button
                   size="petit"
                   variant="blanc"
-                  onClick={() => {
-                    cancelEditPublished(existant.id)
-                    toast('Modifications annulées : la version publique reste inchangée.', 'info')
-                    setBlocks(existant.blocks)
-                  }}
+                  onClick={annuler}
                 >
                   Annuler les modifications
                 </Button>
@@ -192,19 +178,7 @@ export function ArticleEditor() {
               <Button
                 size="petit"
                 variant="ocre"
-                onClick={() => {
-                  if (!existant) {
-                    // création : créer puis publier
-                    const a = createArticle(adminId, { titre, blocks, categorieIds, tagIds, coverMediaId })
-                    publishNow(a.id, adminId)
-                    toast('Article publié immédiatement.')
-                    navigate(`/admin/articles/${a.id}`, { replace: true })
-                    return
-                  }
-                  enregistrer()
-                  publishNow(existant.id, adminId)
-                  toast('Article publié immédiatement : il est désormais visible publiquement.')
-                }}
+                onClick={publier}
               >
                 Publier
               </Button>
@@ -287,10 +261,7 @@ export function ArticleEditor() {
               </Button>
               <Button
                 variant="secondaire"
-                onClick={() => {
-                  enregistrer()
-                  if (!nouveau) navigate(`/admin/articles/${existant?.id}/preview`)
-                }}
+                onClick={previsualiser}
               >
                 <Eye aria-hidden="true" className="h-5 w-5" />
                 Prévisualiser
@@ -349,24 +320,17 @@ export function ArticleEditor() {
                   </Field>
                   <Button
                     variant="ocre"
-                    onClick={() => {
-                      if (!dateProgrammation) {
-                        toast('Choisissez une date de publication.', 'erreur')
-                        return
-                      }
-                      programArticle(existant.id, new Date(dateProgrammation).toISOString(), adminId)
-                      toast('Nouvelle programmation enregistrée.')
-                    }}
+                    onClick={() => programmer(false)}
                   >
                     <CalendarClock aria-hidden="true" className="h-5 w-5" />
                     Enregistrer la nouvelle programmation
                   </Button>
                   <Button
                     variant="secondaire"
-                    onClick={() => {
-                      cancelProgramming(existant.id, adminId)
+                    onClick={() => effectuer(async () => {
+                      await articleAction(existant.id, 'cancel-schedule')
                       toast("Programmation annulée : l'article est de nouveau un brouillon.", 'info')
-                    }}
+                    })}
                   >
                     Annuler la programmation (repasser en brouillon)
                   </Button>
@@ -389,15 +353,7 @@ export function ArticleEditor() {
                       <Button
                         variant="ocre"
                         disabled={!existant}
-                        onClick={() => {
-                          if (!existant || !dateProgrammation) {
-                            toast(existant ? 'Choisissez une date de publication.' : 'Enregistrez d\'abord le brouillon.', 'erreur')
-                            return
-                          }
-                          enregistrer()
-                          programArticle(existant.id, new Date(dateProgrammation).toISOString(), adminId)
-                          toast('Publication programmée : l\'article sera publié automatiquement à la date prévue.')
-                        }}
+                        onClick={() => programmer(true)}
                       >
                         <CalendarClock aria-hidden="true" className="h-5 w-5" />
                         Programmer la publication
@@ -448,10 +404,6 @@ export function ArticleEditor() {
                       onClick={() =>
                         setTagIds((ids) => {
                           if (actif) return ids.filter((x) => x !== t.id)
-                          if (ids.length >= MAX_TAGS) {
-                            toast(`Maximum ${MAX_TAGS} tags par article (règle de maquette à confirmer).`, 'erreur')
-                            return ids
-                          }
                           return [...ids, t.id]
                         })
                       }
@@ -465,7 +417,7 @@ export function ArticleEditor() {
                 })}
               </fieldset>
               <p className="mt-2 text-[0.875rem] text-mist">
-                Maquette : {MAX_TAGS} tags maximum par article.
+                Le nombre maximal de tags reste à préciser.
               </p>
             </section>
 
@@ -473,7 +425,7 @@ export function ArticleEditor() {
               <h2 className="text-xl text-forest">Image de couverture</h2>
               {/* Priorité (§22) : couverture choisie > première image du contenu > visuel par défaut */}
               {cover ? (
-                <img
+                <ContentImage
                   src={mediaUrl(cover.file)}
                   alt={cover.alt}
                   className="mt-3 h-40 w-full rounded-xl border border-line object-cover"
@@ -489,31 +441,23 @@ export function ArticleEditor() {
                   <Paperclip aria-hidden="true" className="h-4 w-4" />
                   {cover ? 'Changer la couverture' : 'Choisir une couverture'}
                 </Button>
+                {cover ? <Button variant="fantome" size="petit" onClick={() => setCoverMediaId(null)}>
+                  Retirer la couverture
+                </Button> : null}
               </div>
               <div className="mt-5 border-t border-line pt-4">
                 <label htmlFor="art-une" className="flex items-start gap-3 text-[1.0625rem]">
                   <input
                     id="art-une"
                     type="checkbox"
-                    checked={misEnAvant}
-                    onChange={(e) => {
-                      setMisEnAvant(e.target.checked)
-                      if (existant) {
-                        updateArticle(existant.id, { misEnAvant: e.target.checked })
-                        toast(
-                          e.target.checked
-                            ? "Article ajouté à la une : il apparaît dans le carrousel de la page d'accueil."
-                            : "Article retiré de la une.",
-                        )
-                      }
-                    }}
+                    checked={false}
+                    disabled
                     className="mt-2 h-6 w-6 shrink-0 accent-forest"
                   />
                   <span>
                     <strong>Mettre à la une</strong>
                     <span className="block text-[0.9375rem] text-mist">
-                      Les articles à la une alimentent le carrousel de la page d'accueil (3 maximum,
-                      ordre de publication).
+                      Le mode de sélection du carrousel reste à définir.
                     </span>
                   </span>
                 </label>
@@ -560,15 +504,14 @@ export function ArticleEditor() {
       <ConfirmDialog
         open={corbeilleConfirme}
         onClose={() => setCorbeilleConfirme(false)}
-        onConfirm={() => {
+        onConfirm={() => effectuer(async () => {
           if (existant) {
-            enregistrer()
-            trashArticle(existant.id, adminId)
+            await articleAction(existant.id, 'trash', { confirmed: true })
             toast('Article placé dans la corbeille : il n\'est plus visible publiquement.', 'info')
             navigate('/admin/articles?onglet=corbeille')
           }
           setCorbeilleConfirme(false)
-        }}
+        })}
         title="Mettre cet article à la corbeille ?"
         confirmLabel="Mettre à la corbeille"
       >
@@ -600,8 +543,7 @@ export function ArticlePreview() {
   }
 
   const blocks = article.blocks
-  const auteur = db.users.find((u) => u.id === article.auteurId)
-  const cover = article.coverMediaId ? getMedia(article.coverMediaId) : undefined
+  const cover = getMedia(article.coverMediaId ?? blocks.find(block => block.type === 'image' && block.mediaId)?.mediaId ?? 'm-visuel-defaut')
 
   return (
     <div>
@@ -630,12 +572,12 @@ export function ArticlePreview() {
         <div className="flex flex-wrap items-center gap-3">
           <ArticleStatutBadge statut={article.statut} />
           <span className="text-[0.9375rem] text-mist">
-            Auteur : {auteur ? `${auteur.prenom} ${auteur.nom}` : 'Utilisateur supprimé'}
+            Auteur : {articleAuthorLabel(article)}
           </span>
         </div>
         <h1 className="mt-4 text-forest">{article.titre}</h1>
         {cover ? (
-          <img
+          <ContentImage
             src={mediaUrl(cover.file)}
             alt={cover.alt}
             className="mt-6 aspect-[16/8] w-full rounded-2xl border border-line object-cover"

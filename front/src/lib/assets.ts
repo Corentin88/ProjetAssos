@@ -8,6 +8,10 @@ export function asset(path: string): string {
 /** URL d'un fichier média de la médiathèque.
  *  Les fichiers importés pendant la session (object URLs) sont laissés tels quels. */
 export function mediaUrl(file: string): string {
+  if (file.startsWith('/media/')) return apiUrl(file)
+  if (file.startsWith('/admin/content/media/')) return file
   if (file.startsWith('blob:') || file.startsWith('data:') || file.startsWith('http')) return file
   return asset(`images/${file}`)
 }
+import { apiUrl } from './auth'
+

@@ -1,3 +1,4 @@
+import { ContentImage } from './ContentImage'
 import type { Block } from '../../types'
 import { Link } from 'react-router-dom'
 import { getMedia } from '../../lib/selectors'
@@ -52,7 +53,7 @@ export function BlockView({ block, sousPage = false }: { block: Block; sousPage?
       if (!media) return null
       return (
         <figure className="overflow-hidden rounded-2xl border border-line">
-          <img
+          <ContentImage
             src={mediaUrl(media.file)}
             alt={block.alt || media.alt}
             width={media.largeur || undefined}

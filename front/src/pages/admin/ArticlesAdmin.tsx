@@ -1,22 +1,10 @@
-import { useCurrentUser } from '../../lib/auth'
+import { ContentImage } from '../../components/content/ContentImage'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Eye, FileText, ListFilter, Pencil, RotateCcw, Search, Trash2, Undo2 } from 'lucide-react'
 import type { Article } from '../../types'
-import {
-  cancelEditPublished,
-  cancelProgramming,
-  db,
-  deleteArticleForever,
-  publishNow,
-  restoreArticle,
-  startEditPublished,
-  trashArticle,
-  unpublish,
-  useDb,
-  useDbVersion,
-  validatePublishedEdit,
-} from '../../lib/db'
+import { db, useDbVersion } from '../../lib/db'
+import { articleAction, useContentAction } from '../../lib/content'
 import { articleAuthorLabel, articleCoverMediaId, getCategory, getMedia } from '../../lib/selectors'
 import { formatDate, formatDateTime } from '../../lib/format'
 import { mediaUrl } from '../../lib/assets'
@@ -41,9 +29,9 @@ const STATUT_PAR_ONGLET: Record<Onglet, Article['statut']> = {
 /** Gestion des articles (§20, §21) : tableau lisible par statut, recherche,
  *  filtres, actions contextuelles, corbeille avec restauration au choix */
 export function ArticlesAdmin() {
-  useDb()
   const navigate = useNavigate()
   const { toast } = useToast()
+  const effectuer = useContentAction()
   const [params, setParams] = useSearchParams()
   const chargement = useFakeLoad(400)
   const version = useDbVersion()
@@ -55,9 +43,6 @@ export function ArticlesAdmin() {
   const [aSupprimer, setASupprimer] = useState<Article | null>(null)
   const [aRestaurer, setARestaurer] = useState<Article | null>(null)
   const [aRetirer, setARetirer] = useState<Article | null>(null)
-
-  const admin = useCurrentUser()
-  const adminId = admin?.id ?? 'u1'
 
   const comptes = {
     publies: db.articles.filter((a) => a.statut === 'publie').length,
@@ -119,20 +104,20 @@ export function ArticlesAdmin() {
               <>
                 <Button
                   size="petit"
-                  onClick={() => {
-                    validatePublishedEdit(a.id, adminId)
+                  onClick={() => effectuer(async () => {
+                    await articleAction(a.id, 'publish')
                     toast('La nouvelle version est publiée : elle remplace la version précédente.')
-                  }}
+                  })}
                 >
                   Valider la nouvelle version
                 </Button>
                 <Button
                   size="petit"
                   variant="blanc"
-                  onClick={() => {
-                    cancelEditPublished(a.id)
+                  onClick={() => effectuer(async () => {
+                    await articleAction(a.id, 'discard-work', { confirmed: true })
                     toast('Les modifications en préparation ont été annulées.', 'info')
-                  }}
+                  })}
                 >
                   Annuler les modifications
                 </Button>
@@ -164,20 +149,20 @@ export function ArticlesAdmin() {
             </Link>
             <Button
               size="petit"
-              onClick={() => {
-                publishNow(a.id, adminId)
+              onClick={() => effectuer(async () => {
+                await articleAction(a.id, 'publish')
                 toast('Article publié immédiatement (publication anticipée).')
-              }}
+              })}
             >
               Publier maintenant
             </Button>
             <Button
               size="petit"
               variant="secondaire"
-              onClick={() => {
-                cancelProgramming(a.id, adminId)
+              onClick={() => effectuer(async () => {
+                await articleAction(a.id, 'cancel-schedule')
                 toast("Programmation annulée : l'article est de nouveau un brouillon.", 'info')
-              }}
+              })}
             >
               Annuler la programmation
             </Button>
@@ -200,20 +185,20 @@ export function ArticlesAdmin() {
             </Link>
             <Button
               size="petit"
-              onClick={() => {
-                publishNow(a.id, adminId)
+              onClick={() => effectuer(async () => {
+                await articleAction(a.id, 'publish')
                 toast('Article publié immédiatement.')
-              }}
+              })}
             >
               Publier immédiatement
             </Button>
             <Button
               size="petit"
               variant="danger"
-              onClick={() => {
-                trashArticle(a.id, adminId)
+              onClick={() => effectuer(async () => {
+                await articleAction(a.id, 'trash')
                 toast('Article placé dans la corbeille.', 'info')
-              }}
+              })}
             >
               <Trash2 aria-hidden="true" className="h-4 w-4" />
               Mettre à la corbeille
@@ -377,7 +362,7 @@ export function ArticlesAdmin() {
                       <tr key={a.id} className="border-b border-line align-top">
                         <td className="px-4 py-3">
                           {cover ? (
-                            <img
+                            <ContentImage
                               src={mediaUrl(cover.file)}
                               alt=""
                               className="h-14 w-20 rounded-lg object-cover"
@@ -439,7 +424,7 @@ export function ArticlesAdmin() {
                     {(() => {
                       const cover = getMedia(articleCoverMediaId(a))
                       return cover ? (
-                        <img
+                        <ContentImage
                           src={mediaUrl(cover.file)}
                           alt=""
                           className="h-20 w-24 shrink-0 rounded-xl object-cover"
@@ -480,24 +465,22 @@ export function ArticlesAdmin() {
       <ConfirmDialog
         open={!!aCorbeille}
         onClose={() => setACorbeille(null)}
-        onConfirm={() => {
+        onConfirm={() => effectuer(async () => {
           if (aCorbeille) {
-            trashArticle(aCorbeille.id, adminId)
+            await articleAction(aCorbeille.id, 'trash', { confirmed: true })
             toast(
-              "Article programmé déplacé dans la corbeille : sa programmation est annulée et il ne sera pas publié à la date prévue.",
+              'Article placé dans la corbeille.',
               'info',
             )
           }
           setACorbeille(null)
-        }}
-        title="Confirmer la suppression de l'article programmé"
+        })}
+        title="Confirmer la mise à la corbeille"
         confirmLabel="Mettre à la corbeille"
       >
         <p>
-          « {aCorbeille?.titre} » est programmé pour le{' '}
-          {aCorbeille?.programmeAt ? formatDateTime(aCorbeille.programmeAt) : ''}. Si vous
-          confirmez, l'article sera placé dans la corbeille, sa programmation sera annulée et il
-          ne sera pas publié à la date prévue.
+          « {aCorbeille?.titre} » sera placé dans la corbeille.
+          {aCorbeille?.programmeAt ? ` Sa publication prévue le ${formatDateTime(aCorbeille.programmeAt)} sera annulée.` : ''}
         </p>
       </ConfirmDialog>
 
@@ -505,13 +488,13 @@ export function ArticlesAdmin() {
       <ConfirmDialog
         open={!!aRestaurer}
         onClose={() => setARestaurer(null)}
-        onConfirm={() => {
+        onConfirm={() => effectuer(async () => {
           if (aRestaurer) {
-            restoreArticle(aRestaurer.id, 'brouillon', adminId)
+            await articleAction(aRestaurer.id, 'restore-draft')
             toast("Article restauré en brouillon : il n'est pas publié automatiquement.")
           }
           setARestaurer(null)
-        }}
+        })}
         title="Restaurer depuis la corbeille"
         confirmLabel="Restaurer en brouillon"
       >
@@ -529,13 +512,13 @@ export function ArticlesAdmin() {
         <div className="mt-4">
           <Button
             variant="ocre"
-            onClick={() => {
+            onClick={() => effectuer(async () => {
               if (aRestaurer) {
-                restoreArticle(aRestaurer.id, 'publie', adminId)
+                await articleAction(aRestaurer.id, 'restore-published')
                 toast('Article restauré et publié : il est à nouveau accessible publiquement.')
               }
               setARestaurer(null)
-            }}
+            })}
           >
             Restaurer directement en publié
           </Button>
@@ -546,13 +529,13 @@ export function ArticlesAdmin() {
       <ConfirmDialog
         open={!!aSupprimer}
         onClose={() => setASupprimer(null)}
-        onConfirm={() => {
+        onConfirm={() => effectuer(async () => {
           if (aSupprimer) {
-            deleteArticleForever(aSupprimer.id, adminId)
+            await articleAction(aSupprimer.id, 'delete', { confirmed: true })
             toast('Article supprimé définitivement, avec ses commentaires associés.', 'info')
           }
           setASupprimer(null)
-        }}
+        })}
         title="Supprimer définitivement cet article ?"
         confirmLabel="Supprimer définitivement"
       >
@@ -569,16 +552,16 @@ export function ArticlesAdmin() {
       <ConfirmDialog
         open={!!aRetirer}
         onClose={() => setARetirer(null)}
-        onConfirm={() => {
+        onConfirm={() => effectuer(async () => {
           if (aRetirer) {
-            unpublish(aRetirer.id, adminId)
+            await articleAction(aRetirer.id, 'unpublish')
             toast(
               "Article retiré de la publication : il redevient un brouillon non visible publiquement.",
               'info',
             )
           }
           setARetirer(null)
-        }}
+        })}
         title="Retirer cet article de la publication ?"
         confirmLabel="Retirer de la publication"
       >
