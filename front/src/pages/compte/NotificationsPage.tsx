@@ -1,19 +1,12 @@
-import { useCurrentUser } from '../../lib/auth'
+import { authErrorMessage, useCurrentUser } from '../../lib/auth'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { BellOff, CircleAlert, Info, ShieldCheck, Trash2 } from 'lucide-react'
-import {
-  deleteAllNotifications,
-  deleteNotification,
-  markAllNotificationsRead,
-  markNotificationRead,
-  useDb,
-} from '../../lib/db'
-import { userNotifications } from '../../lib/selectors'
+import { changeNotifications, useNotifications } from '../../lib/community'
 import { formatDateTime } from '../../lib/format'
 import { Button } from '../../components/ui/form'
 import { ConfirmDialog } from '../../components/ui/overlay'
-import { EmptyState } from '../../components/ui/feedback'
+import { Alert, EmptyState } from '../../components/ui/feedback'
 import { useToast } from '../../hooks/useToast'
 
 const ICONES = {
@@ -25,13 +18,19 @@ const ICONES = {
 /** Notifications internes (§16) : consultation, marquage, suppression.
  *  Conservées 1 an maximum ; aucune notification e-mail systématique. */
 export function NotificationsPage() {
-  useDb()
   const { toast } = useToast()
   const user = useCurrentUser()
-  const notifications = user ? userNotifications(user.id) : []
+  const { data: notifications, error } = useNotifications()
   const nonLues = notifications.filter((n) => !n.lue).length
 
   if (!user) return null
+
+  const change = async (action: 'read' | 'delete', id?: string, success?: string) => {
+    try {
+      await changeNotifications(user.id, action, id)
+      if (success) toast(success, action === 'delete' ? 'info' : undefined)
+    } catch (error) { toast(authErrorMessage(error), 'erreur') }
+  }
 
   return (
     <section aria-labelledby="titre-notifications">
@@ -50,10 +49,7 @@ export function NotificationsPage() {
             variant="secondaire"
             size="petit"
             disabled={nonLues === 0}
-            onClick={() => {
-              markAllNotificationsRead(user.id)
-              toast('Toutes vos notifications sont marquées comme lues.')
-            }}
+            onClick={() => void change('read', undefined, 'Toutes vos notifications sont marquées comme lues.')}
           >
             Tout marquer comme lu
           </Button>
@@ -67,7 +63,7 @@ export function NotificationsPage() {
           : 'Aucune notification non lue'}
       </p>
 
-      {notifications.length === 0 ? (
+      {error ? <Alert kind="erreur" title="Notifications indisponibles">{error}</Alert> : notifications.length === 0 ? (
         <div className="mt-6">
           <EmptyState
             icon={BellOff}
@@ -109,7 +105,7 @@ export function NotificationsPage() {
                       {n.link ? (
                         <Link
                           to={n.link}
-                          onClick={() => markNotificationRead(n.id)}
+                          onClick={() => { if (!n.lue) void change('read', n.id) }}
                           className="inline-flex min-h-[44px] items-center rounded-lg font-bold text-forest underline decoration-2 underline-offset-4 hover:bg-leaf-pale"
                         >
                           Voir le contenu concerné
@@ -119,7 +115,7 @@ export function NotificationsPage() {
                       {!n.lue ? (
                         <button
                           type="button"
-                          onClick={() => markNotificationRead(n.id)}
+                          onClick={() => { if (!n.lue) void change('read', n.id) }}
                           className="inline-flex min-h-[44px] items-center rounded-lg px-3 font-bold text-forest underline decoration-2 underline-offset-4 hover:bg-leaf-pale"
                         >
                           Marquer comme lue
@@ -127,10 +123,7 @@ export function NotificationsPage() {
                       ) : null}
                       <button
                         type="button"
-                        onClick={() => {
-                          deleteNotification(n.id)
-                          toast('Notification supprimée.', 'info')
-                        }}
+                        onClick={() => void change('delete', n.id, 'Notification supprimée.')}
                         className="inline-flex min-h-[44px] items-center gap-2 rounded-lg px-3 font-bold text-brique underline decoration-2 underline-offset-4 hover:bg-brique-pale"
                       >
                         <Trash2 aria-hidden="true" className="h-4 w-4" />
@@ -160,8 +153,9 @@ function ButtonSupprimerTout({ userId }: { userId: string }) {
       <ConfirmDialog
         open={confirme}
         onClose={() => setConfirme(false)}
-        onConfirm={() => {
-          deleteAllNotifications(userId)
+        onConfirm={async () => {
+          try { await changeNotifications(userId, 'delete') }
+          catch (error) { toast(authErrorMessage(error), 'erreur'); return }
           setConfirme(false)
           toast('Toutes vos notifications ont été supprimées.', 'info')
         }}

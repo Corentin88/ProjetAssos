@@ -1,12 +1,13 @@
 import { Link } from 'react-router-dom'
 import { Compass, Ear, Keyboard, Palette, Search, TextQuote } from 'lucide-react'
-import { useDb } from '../../lib/db'
+import type { AssociationPage } from '../../types'
+import { useResource } from '../../lib/community'
 import { PageHead } from '../../components/layout/PublicLayout'
 
 /** Mentions légales */
 export function MentionsLegales() {
-  const db = useDb()
-  const c = db.association.coordonnees
+  const { data } = useResource<AssociationPage>('/association')
+  const c = data?.coordonnees
   return (
     <div>
       <PageHead titre="Mentions légales" />
@@ -16,12 +17,11 @@ export function MentionsLegales() {
             <h2 id="ml-editeur" className="text-2xl text-forest">Éditeur du site</h2>
             <p className="mt-3">
               Le site est édité par l'association <strong>Foyer Rural d'Arches</strong>,
-              association loi 1901 fondée en 1962, dont le siège se situe au {c.adresse},{' '}
-              {c.codePostal} {c.ville}.
+              association loi 1901 fondée en 1962{c?.adresse && `, dont le siège se situe au ${c.adresse}, ${c.codePostal} ${c.ville}`}.
             </p>
             <ul className="mt-3 flex list-disc flex-col gap-1 pl-5">
-              <li>Téléphone : {c.telephone}</li>
-              <li>Courriel : {c.email}</li>
+              {c?.telephone && <li>Téléphone : {c.telephone}</li>}
+              {c?.email && <li>Courriel : {c.email}</li>}
               <li>Responsable de la publication : Claire Marchal, présidente</li>
             </ul>
           </section>

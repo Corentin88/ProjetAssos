@@ -1,34 +1,27 @@
-import { useCurrentUser } from '../../lib/auth'
+import { authErrorMessage } from '../../lib/auth'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { History, MessagesSquare, Pencil, Search, Trash2 } from 'lucide-react'
 import type { Comment } from '../../types'
-import {
-  adminEditComment,
-  db,
-  moderateComment,
-  MOTIFS_MODERATION,
-  useDb,
-  useDbVersion,
-} from '../../lib/db'
-import { getArticleById, visibleComments } from '../../lib/selectors'
+import { editComment, isDeletedComment, moderateComment, moderationReasons, useResource } from '../../lib/community'
 import { formatDateTime } from '../../lib/format'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
-import { Badge, EmptyState } from '../../components/ui/feedback'
+import { Alert, Badge, EmptyState } from '../../components/ui/feedback'
 import { Button, Field, Input, Textarea } from '../../components/ui/form'
 import { ConfirmDialog, Modal } from '../../components/ui/overlay'
 import { useToast } from '../../hooks/useToast'
+
+const MOTIFS_MODERATION = Object.keys(moderationReasons) as (keyof typeof moderationReasons)[]
+const aucunCommentaire: Comment[] = []
 
 type FiltreStatut = 'tous' | 'visibles' | 'supprimes-auteur' | 'moderes'
 
 /** Modération des commentaires (§28 à §31) : consultation détaillée, modification,
  *  suppression avec motif obligatoire, historique des versions */
 export function CommentairesAdmin() {
-  useDb()
-  const version = useDbVersion()
+  const { data, error, refresh } = useResource<Comment[]>('/admin/comments', true)
+  const lignes = data ?? aucunCommentaire
   const { toast } = useToast()
-  const admin = useCurrentUser()
-  const adminId = admin?.id ?? 'u1'
 
   const [recherche, setRecherche] = useState('')
   const [filtreArticle, setFiltreArticle] = useState('')
@@ -36,19 +29,17 @@ export function CommentairesAdmin() {
 
   const [aConsulter, setAConsulter] = useState<Comment | null>(null)
   const [aModerer, setAModerer] = useState<Comment | null>(null)
-  const [motif, setMotif] = useState<string>(MOTIFS_MODERATION[0])
+  const [motif, setMotif] = useState<keyof typeof moderationReasons>(MOTIFS_MODERATION[0])
   const [precision, setPrecision] = useState('')
   const [erreurMotif, setErreurMotif] = useState('')
   const [aEditer, setAEditer] = useState<Comment | null>(null)
   const [contenuEdition, setContenuEdition] = useState('')
   const [historique, setHistorique] = useState<Comment | null>(null)
 
-  const articlesAvecCommentaires = db.articles.filter((a) =>
-    db.comments.some((c) => c.articleId === a.id),
-  )
+  const articlesAvecCommentaires = Array.from(new Map(lignes.map(c => [c.articleId, { id: c.articleId, titre: c.articleTitre ?? 'Article indisponible' }])).values())
 
   const commentaires = useMemo(() => {
-    let list = [...db.comments].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    let list = [...lignes].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     const q = recherche.trim().toLowerCase()
     if (q) {
       list = list.filter(
@@ -56,18 +47,18 @@ export function CommentairesAdmin() {
       )
     }
     if (filtreArticle) list = list.filter((c) => c.articleId === filtreArticle)
-    if (filtreStatut === 'visibles') list = list.filter((c) => !c.deletedByAuthor && !c.moderation)
+    if (filtreStatut === 'visibles') list = list.filter((c) => !isDeletedComment(c))
     if (filtreStatut === 'supprimes-auteur') list = list.filter((c) => c.deletedByAuthor)
-    if (filtreStatut === 'moderes') list = list.filter((c) => c.moderation)
+    if (filtreStatut === 'moderes') list = list.filter((c) => c.deletedByAdmin)
     return list
-  }, [version, recherche, filtreArticle, filtreStatut])
+  }, [lignes, recherche, filtreArticle, filtreStatut])
 
-  const nbVisibles = db.comments.filter((c) => !c.deletedByAuthor && !c.moderation).length
+  const nbVisibles = lignes.filter((c) => !isDeletedComment(c)).length
 
   /** Réponses associées à un commentaire (thread complet) */
   const reponsesDe = (id: string) =>
-    db.comments.filter((c) => c.parentId === id).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  const parentDe = (c: Comment) => (c.parentId ? db.comments.find((x) => x.id === c.parentId) ?? null : null)
+    lignes.filter((c) => c.parentId === id).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  const parentDe = (c: Comment) => (c.parentId ? lignes.find((x) => x.id === c.parentId) ?? null : null)
 
   return (
     <>
@@ -84,13 +75,13 @@ export function CommentairesAdmin() {
           <div className="carte p-5">
             <dt className="text-[0.9375rem] text-mist">Supprimés par leur auteur</dt>
             <dd className="text-2xl font-bold">
-              {db.comments.filter((c) => c.deletedByAuthor).length}
+              {lignes.filter((c) => c.deletedByAuthor).length}
             </dd>
           </div>
           <div className="carte p-5">
             <dt className="text-[0.9375rem] text-mist">Supprimés par la modération</dt>
             <dd className="text-2xl font-bold">
-              {db.comments.filter((c) => c.moderation).length}
+              {lignes.filter((c) => c.deletedByAdmin).length}
             </dd>
           </div>
         </dl>
@@ -140,10 +131,10 @@ export function CommentairesAdmin() {
 
         <p className="mt-4 text-mist" role="status">
           {commentaires.length} commentaire{commentaires.length > 1 ? 's' : ''} affiché
-          {commentaires.length > 1 ? 's' : ''} sur {db.comments.length}
+          {commentaires.length > 1 ? 's' : ''} sur {lignes.length}
         </p>
 
-        {commentaires.length === 0 ? (
+        {error ? <Alert kind="erreur" title="Commentaires indisponibles">{error}</Alert> : !data ? <p role="status">Chargement…</p> : commentaires.length === 0 ? (
           <div className="mt-6">
             <EmptyState
               icon={MessagesSquare}
@@ -154,8 +145,8 @@ export function CommentairesAdmin() {
         ) : (
           <ul className="mt-6 flex flex-col gap-4">
             {commentaires.map((c) => {
-              const article = getArticleById(c.articleId)
-              const visible = !c.deletedByAuthor && !c.moderation
+              const article = c.articleSlug ? { slug: c.articleSlug, titre: c.articleTitre } : undefined
+              const visible = !isDeletedComment(c)
               const reponses = reponsesDe(c.id)
               return (
                 <li key={c.id} className="carte p-5">
@@ -194,7 +185,7 @@ export function CommentairesAdmin() {
                     )}
                   </p>
                   <p className={`mt-2 whitespace-pre-line text-[1.0625rem] ${visible ? '' : 'italic text-mist'}`}>
-                    {c.deletedByAuthor || c.moderation
+                    {isDeletedComment(c)
                       ? '« Commentaire supprimé » — contenu conservé côté administration.'
                       : c.contenu}
                   </p>
@@ -202,9 +193,7 @@ export function CommentairesAdmin() {
                     <p className="mt-2 rounded-xl bg-brique-pale px-3 py-2 text-[0.9375rem] text-brique">
                       Motif de la modération : <strong>{c.moderation.motif}</strong>
                       {c.moderation.precision ? ` — ${c.moderation.precision}` : ''} par{' '}
-                      {db.users.find((u) => u.id === c.moderation!.adminId)
-                        ? `${db.users.find((u) => u.id === c.moderation!.adminId)?.prenom} ${db.users.find((u) => u.id === c.moderation!.adminId)?.nom}`
-                        : 'un administrateur'}{' '}
+                      {c.moderation.adminLabel ?? 'Administrateur supprimé'}
                       le {formatDateTime(c.moderation.at)}. Contenu supprimé conservé 6 mois.
                     </p>
                   ) : null}
@@ -259,7 +248,7 @@ export function CommentairesAdmin() {
         {aConsulter ? (
           <div className="flex flex-col gap-5">
             {(() => {
-              const article = getArticleById(aConsulter.articleId)
+              const article = aConsulter.articleSlug ? { slug: aConsulter.articleSlug, titre: aConsulter.articleTitre } : undefined
               const parent = parentDe(aConsulter)
               const reponses = reponsesDe(aConsulter.id)
               return (
@@ -292,7 +281,7 @@ export function CommentairesAdmin() {
                   <div>
                     <p className="font-bold">Contenu complet</p>
                     <p className="mt-2 whitespace-pre-line rounded-xl border border-line bg-white p-4 text-[1.0625rem]">
-                      {aConsulter.deletedByAuthor || aConsulter.moderation
+                      {isDeletedComment(aConsulter)
                         ? '« Commentaire supprimé » — le contenu original reste consultable ci-dessous.'
                         : aConsulter.contenu}
                     </p>
@@ -304,9 +293,7 @@ export function CommentairesAdmin() {
                         </p>
                         <p className="mt-1">
                           Par{' '}
-                          {db.users.find((u) => u.id === aConsulter.moderation!.adminId)
-                            ? `${db.users.find((u) => u.id === aConsulter.moderation!.adminId)?.prenom} ${db.users.find((u) => u.id === aConsulter.moderation!.adminId)?.nom}`
-                            : 'un administrateur'}{' '}
+                          {aConsulter.moderation.adminLabel ?? 'Administrateur supprimé'}
                           le {formatDateTime(aConsulter.moderation.at)}.
                         </p>
                         <p className="mt-2 whitespace-pre-line rounded-lg bg-white p-3">
@@ -336,7 +323,7 @@ export function CommentairesAdmin() {
                             <strong>{r.auteurLabel}</strong>
                             <span className="text-mist"> — le {formatDateTime(r.createdAt)}</span>
                             <p className="mt-1 whitespace-pre-line">
-                              {r.deletedByAuthor || r.moderation
+                              {isDeletedComment(r)
                                 ? '« Commentaire supprimé »'
                                 : r.contenu}
                             </p>
@@ -372,13 +359,14 @@ export function CommentairesAdmin() {
           setErreurMotif('')
           setPrecision('')
         }}
-        onConfirm={() => {
+        onConfirm={async () => {
           if (!aModerer) return
           if (motif === 'Autre' && !precision.trim()) {
             setErreurMotif('Une précision est obligatoire pour le motif « Autre ».')
             return
           }
-          moderateComment(aModerer.id, motif, precision.trim() || null, adminId)
+          try { await moderateComment(aModerer.id, motif, precision.trim() || undefined); await refresh() }
+          catch (error) { setErreurMotif(authErrorMessage(error)); return }
           toast(
             `Commentaire supprimé (motif : ${motif}). Il est remplacé par « Commentaire supprimé » dans la discussion ; ses réponses sont conservées. L'action est inscrite au journal d'activité.`,
             'info',
@@ -451,9 +439,10 @@ export function CommentairesAdmin() {
               Annuler
             </Button>
             <Button
-              onClick={() => {
+              onClick={async () => {
                 if (aEditer && contenuEdition.trim()) {
-                  adminEditComment(aEditer.id, contenuEdition, adminId)
+                  try { await editComment(aEditer.id, contenuEdition, true); await refresh() }
+                  catch (error) { toast(authErrorMessage(error), 'erreur'); return }
                   toast("Commentaire modifié par l'administration. L'action est inscrite au journal.")
                   setAEditer(null)
                 }

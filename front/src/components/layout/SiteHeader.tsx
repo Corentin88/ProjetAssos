@@ -1,10 +1,9 @@
 import { useEffect, useRef } from 'react'
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { LayoutDashboard, LogIn, LogOut, Menu, UserPlus, X } from 'lucide-react'
-import { useDb } from '../../lib/db'
 import { authErrorMessage, logout, useCurrentUser } from '../../lib/auth'
 import { useToast } from '../../hooks/useToast'
-import { unreadNotificationCount } from '../../lib/selectors'
+import { useNotifications } from '../../lib/community'
 import { asset } from '../../lib/assets'
 import { buttonClasses } from '../ui/form'
 import { Avatar } from '../ui/misc'
@@ -21,7 +20,6 @@ function lienClasse({ isActive }: { isActive: boolean }): string {
 }
 
 export function SiteHeader() {
-  useDb()
   const navigate = useNavigate()
   const { key } = useLocation()
   const dialogMobile = useRef<HTMLDialogElement>(null)
@@ -29,7 +27,8 @@ export function SiteHeader() {
   const utilisateur = useCurrentUser()
   const { toast } = useToast()
   const compteAccessible = utilisateur?.statut === 'actif'
-  const unread = compteAccessible ? unreadNotificationCount(utilisateur.id) : 0
+  const { data: notifications } = useNotifications()
+  const unread = compteAccessible ? notifications.filter(n => !n.lue).length : 0
 
   const closeMenu = () => dialogMobile.current?.close()
 

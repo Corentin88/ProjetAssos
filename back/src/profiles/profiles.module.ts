@@ -22,7 +22,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import sharp from 'sharp';
-import type { AvatarKind } from '../../generated/prisma/client.js';
+import type { Profile } from '../../generated/prisma/client.js';
 import { AuthModule } from '../auth/auth.module.js';
 import {
   AccessGuard,
@@ -43,13 +43,26 @@ import {
   writeAvatarFile,
 } from './avatar-files.js';
 
-const profileFields = {
+export const profileFields = {
   firstName: true,
   lastName: true,
   avatarKind: true,
   avatarPreset: true,
   googleAvatar: true,
 } as const;
+
+export function presentAvatar(
+  userId: string,
+  profile: Pick<Profile, 'avatarKind' | 'avatarPreset' | 'googleAvatar'>,
+) {
+  const kind = profile.avatarKind;
+  if (kind === 'PERSONAL')
+    return { kind, url: `/api/v1/profiles/${userId}/avatar` };
+  if (kind === 'PRESET') return { kind, preset: Number(profile.avatarPreset) };
+  if (kind === 'GOOGLE' && profile.googleAvatar)
+    return { kind, url: profile.googleAvatar };
+  return { kind: 'DEFAULT' };
+}
 
 @Injectable()
 class ProfilesService {
@@ -95,7 +108,7 @@ class ProfilesService {
       lastActiveAt: user.lastActiveAt,
       firstName: user.profile.firstName,
       lastName: user.profile.lastName,
-      avatar: this.presentAvatar(user.id, user.profile),
+      avatar: presentAvatar(user.id, user.profile),
       pendingEmail: user.accountTokens[0]?.newEmail ?? null,
       authMethods: [
         ...(user.passwordHash ? ['password'] : []),
@@ -115,7 +128,7 @@ class ProfilesService {
       firstName: user.profile.firstName,
       lastInitial: Array.from(user.profile.lastName)[0] ?? '',
       createdAt: user.createdAt,
-      avatar: this.presentAvatar(userId, user.profile),
+      avatar: presentAvatar(userId, user.profile),
       commentCount: await this.prisma.comment.count({
         where: {
           userId,
@@ -234,24 +247,6 @@ class ProfilesService {
     });
     if (!image) throw new NotFoundException();
     return image;
-  }
-
-  private presentAvatar(
-    userId: string,
-    profile: {
-      avatarKind: AvatarKind;
-      avatarPreset: string | null;
-      googleAvatar: string | null;
-    },
-  ) {
-    const kind = profile.avatarKind;
-    if (kind === 'PERSONAL')
-      return { kind, url: `/api/v1/profiles/${userId}/avatar` };
-    if (kind === 'PRESET')
-      return { kind, preset: Number(profile.avatarPreset) };
-    if (kind === 'GOOGLE' && profile.googleAvatar)
-      return { kind, url: profile.googleAvatar };
-    return { kind: 'DEFAULT' };
   }
 
   private async prepareImage(input: Buffer) {

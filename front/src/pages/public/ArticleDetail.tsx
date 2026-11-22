@@ -1,4 +1,6 @@
 import { useCurrentUser } from '../../lib/auth'
+import type { Comment } from '../../types'
+import { isDeletedComment, useResource } from '../../lib/community'
 import { useEffect } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { ArrowLeft, CalendarDays, Eye, MessageCircle, PencilLine, User } from 'lucide-react'
@@ -11,11 +13,11 @@ import {
   getMedia,
   getTag,
   publicBlocks,
-  visibleComments,
 } from '../../lib/selectors'
 import { formatDate, formatDateTime, formatNombre } from '../../lib/format'
 import { mediaUrl } from '../../lib/assets'
 import { BlockRenderer } from '../../components/content/BlockRenderer'
+import { TrailDetails } from '../../components/content/TrailDetails'
 import { CommentsSection } from '../../components/content/Comments'
 import { Alert, ErrorState } from '../../components/ui/feedback'
 import { Breadcrumb } from '../../components/ui/nav'
@@ -29,6 +31,7 @@ export function ArticleDetail() {
   const location = useLocation()
   const article = slug ? getArticleBySlug(slug) : undefined
   const sessionUser = useCurrentUser()
+  const thread = useResource<Comment[]>(article ? `/articles/${article.id}/comments` : undefined, sessionUser?.statut === 'actif')
 
   useEffect(() => {
     if (!article || !/^#commentaire-[\w-]+$/.test(location.hash)) return
@@ -39,7 +42,7 @@ export function ArticleDetail() {
       commentaire?.scrollIntoView({ block: 'start', behavior: 'instant' })
     })
     return () => cancelAnimationFrame(frame)
-  }, [article, location.hash])
+  }, [article, location.hash, thread.data])
 
   /** URL de la liste d'origine (critères, tri, pagination) transmise par les
    *  cartes d'articles : « Retour à la liste » ne perd aucun critère (§25) */
@@ -69,7 +72,7 @@ export function ArticleDetail() {
   const cover = getMedia(coverId)
   const auteur = article.auteurId ? { id: article.auteurId } : undefined
   const compteActif = sessionUser?.statut === 'actif'
-  const nbCommentaires = visibleComments(article.id).length
+  const nbCommentaires = thread.data?.filter(comment => !isDeletedComment(comment)).length ?? 0
 
   // Liens des tags/catégories préservent les filtres vers la liste
   return (
@@ -179,7 +182,8 @@ export function ArticleDetail() {
         </div>
       </div>
 
-      <CommentsSection articleId={article.id} />
+      {article.trail && <TrailDetails key={article.id} trail={article.trail} articleId={article.id} />}
+      <CommentsSection articleId={article.id} comments={thread.data} error={thread.error} refresh={thread.refresh} />
 
       <p className="mt-10">
         <Link

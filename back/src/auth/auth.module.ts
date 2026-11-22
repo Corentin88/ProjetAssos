@@ -40,6 +40,7 @@ import { SessionService } from './session.service.js';
     AuthRateGuard,
   ],
   exports: [
+    AccountLinksService,
     AccountsService,
     SessionService,
     AccessGuard,

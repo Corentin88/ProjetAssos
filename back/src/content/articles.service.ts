@@ -19,6 +19,8 @@ import {
   blockTypes,
 } from './content.dto.js';
 import { contentLog, contentSlug, lockAdmin } from './content.shared.js';
+import { TrailsService } from './trails.js';
+import type { TrailDto } from './trails.js';
 
 const articleInclude = {
   user: {
@@ -50,7 +52,7 @@ const frontendType = Object.fromEntries(
   Object.entries(blockTypes).map(([key, value]) => [value, key]),
 );
 
-function presentBlocks(version: Version) {
+export function presentBlocks(version: { blocks: Pick<Version['blocks'][number], 'id' | 'type' | 'data' | 'mediaId'>[] }) {
   return version.blocks.map((block) => ({
     ...(block.data as {
       text?: string;
@@ -97,6 +99,13 @@ function present(article: StoredArticle, admin: boolean) {
         : null,
     misEnAvant: article.carouselPosition !== null,
     positionCarrousel: article.carouselPosition,
+    trail: version.trail ? {
+      name: version.trail.name, description: version.trail.description,
+      distance: version.trail.distance, elevationGain: version.trail.elevationGain,
+      elevationLoss: version.trail.elevationLoss, duration: version.trail.duration,
+      difficulty: version.trail.difficulty, mapPreview: version.trail.mapPreview,
+      ...(admin ? { gpxMediaId: version.trail.gpxMediaId } : {}),
+    } : null,
   };
 }
 
@@ -122,7 +131,7 @@ function youtubeLink(value: string) {
   );
 }
 
-function blockInput(block: BlockDto, position: number) {
+export function blockInput(block: BlockDto, position: number) {
   const type = blockTypes[block.type];
   const { text, items, alt, mediaId } = block;
   const url = block.url?.trim();
@@ -162,6 +171,7 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly sessions: SessionService,
+    private readonly trails: TrailsService,
   ) {}
 
   onModuleInit() {
@@ -216,7 +226,10 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
         data: {
           slug: contentSlug(dto.titre),
           userId: actor.userId,
-          versions: { create: { kind: 'WORKING', ...this.versionData(dto) } },
+          versions: { create: {
+            kind: 'WORKING', ...this.versionData(dto),
+            ...(dto.trail ? { trail: { create: await this.trails.data(tx, dto.trail) } } : {}),
+          } },
         },
         include: articleInclude,
       });
@@ -249,11 +262,13 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
           where: { id: working.id },
           data: this.versionData(dto),
         });
+        if (dto.trail !== undefined) await this.saveTrail(tx, working.id, dto.trail);
       } else {
         const version = await tx.articleVersion.create({
           data: { articleId: id, kind: 'WORKING', ...this.versionData(dto) },
         });
-        await this.copyTrail(tx, article, version.id);
+        if (dto.trail !== undefined) await this.saveTrail(tx, version.id, dto.trail);
+        else await this.copyTrail(tx, article, version.id);
       }
       // Un article déjà programmé doit rester publiable après chaque modification.
       if (article.status === 'SCHEDULED')
@@ -543,6 +558,15 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
       'PUBLISH',
       actor ? 'Article publié.' : 'Publication programmée exécutée.',
     );
+  }
+
+  private async saveTrail(tx: Prisma.TransactionClient, versionId: string, trail: TrailDto | null) {
+    if (trail === null) {
+      await tx.trail.deleteMany({ where: { versionId } });
+    } else {
+      const data = await this.trails.data(tx, trail);
+      await tx.trail.upsert({ where: { versionId }, create: { versionId, ...data }, update: data });
+    }
   }
 
   private async copyTrail(

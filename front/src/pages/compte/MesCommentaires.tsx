@@ -1,24 +1,22 @@
-import { useCurrentUser } from '../../lib/auth'
+import { authErrorMessage, useCurrentUser } from '../../lib/auth'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { MessageSquare, Pencil, Trash2 } from 'lucide-react'
 import type { Comment } from '../../types'
-import { db, deleteCommentByAuthor, editComment, useDb } from '../../lib/db'
-import { myComments } from '../../lib/selectors'
+import { deleteComment, editComment, isDeletedComment, useResource } from '../../lib/community'
 import { formatDateTime } from '../../lib/format'
 import { Button, Field, Textarea } from '../../components/ui/form'
 import { ConfirmDialog } from '../../components/ui/overlay'
-import { EmptyState } from '../../components/ui/feedback'
+import { Alert, EmptyState } from '../../components/ui/feedback'
 import { useToast } from '../../hooks/useToast'
 
 /** « Mes commentaires » (§13) : édition sans limite de temps, suppression
  *  avec placeholder public. Les commentaires supprimés par l'auteur
  *  n'apparaissent plus ici (§30). */
 export function MesCommentaires() {
-  useDb()
   const { toast } = useToast()
   const user = useCurrentUser()
-  const commentaires = user ? myComments(user.id) : []
+  const { data: commentaires, error, refresh } = useResource<Comment[]>('/me/comments', true)
   const [aEditer, setAEditer] = useState<Comment | null>(null)
   const [contenuEdition, setContenuEdition] = useState('')
   const [aSupprimer, setASupprimer] = useState<Comment | null>(null)
@@ -37,7 +35,7 @@ export function MesCommentaires() {
         réponses éventuelles sont conservées.
       </p>
 
-      {commentaires.length === 0 ? (
+      {error ? <Alert kind="erreur" title="Commentaires indisponibles">{error}</Alert> : !commentaires ? <p role="status">Chargement…</p> : commentaires.length === 0 ? (
         <div className="mt-6">
           <EmptyState
             icon={MessageSquare}
@@ -53,14 +51,13 @@ export function MesCommentaires() {
       ) : (
         <ul className="mt-6 flex flex-col gap-4">
           {commentaires.map((c) => {
-            const article = db.articles.find((a) => a.id === c.articleId)
             return (
               <li key={c.id} className="rounded-2xl border border-line bg-white p-6">
                 <p className="text-[0.9375rem] text-mist">
                   Sur l'article{' '}
-                  {article ? (
-                    <Link to={`/actualites/${article.slug}#commentaire-${c.id}`} className="font-bold text-forest underline underline-offset-4">
-                      {article.titre}
+                  {c.articleSlug ? (
+                    <Link to={`/actualites/${c.articleSlug}#commentaire-${c.id}`} className="font-bold text-forest underline underline-offset-4">
+                      {c.articleTitre}
                     </Link>
                   ) : (
                     <span>(article retiré du site)</span>
@@ -69,10 +66,11 @@ export function MesCommentaires() {
                 {aEditer?.id === c.id ? (
                   <form
                     className="mt-3 flex flex-col gap-3"
-                    onSubmit={(e) => {
+                    onSubmit={async (e) => {
                       e.preventDefault()
                       if (!contenuEdition.trim()) return
-                      editComment(c.id, contenuEdition)
+                      try { await editComment(c.id, contenuEdition); await refresh() }
+                      catch (error) { toast(authErrorMessage(error), 'erreur'); return }
                       setAEditer(null)
                       toast('Commentaire modifié. La date de modification est enregistrée.')
                     }}
@@ -93,12 +91,12 @@ export function MesCommentaires() {
                   </form>
                 ) : (
                   <>
-                    <p className="mt-3 whitespace-pre-line text-[1.0625rem]">{c.contenu}</p>
+                    <p className="mt-3 whitespace-pre-line text-[1.0625rem]">{isDeletedComment(c) ? 'Commentaire supprimé par la modération' : c.contenu}</p>
                     <p className="mt-2 text-[0.875rem] text-mist">
                       Publié le {formatDateTime(c.createdAt)}
                       {c.updatedAt ? ` — Modifié le ${formatDateTime(c.updatedAt)}` : ''}
                     </p>
-                    <div className="mt-3 flex flex-wrap gap-3">
+                    {!isDeletedComment(c) && <div className="mt-3 flex flex-wrap gap-3">
                       <button
                         type="button"
                         onClick={() => {
@@ -118,7 +116,7 @@ export function MesCommentaires() {
                         <Trash2 aria-hidden="true" className="h-4 w-4" />
                         Supprimer
                       </button>
-                    </div>
+                    </div>}
                   </>
                 )}
               </li>
@@ -130,9 +128,10 @@ export function MesCommentaires() {
       <ConfirmDialog
         open={!!aSupprimer}
         onClose={() => setASupprimer(null)}
-        onConfirm={() => {
+        onConfirm={async () => {
           if (aSupprimer) {
-            deleteCommentByAuthor(aSupprimer.id)
+            try { await deleteComment(aSupprimer.id); await refresh() }
+            catch (error) { toast(authErrorMessage(error), 'erreur'); return }
             toast('Commentaire supprimé. Il est remplacé par « Commentaire supprimé » dans la discussion.', 'info')
           }
           setASupprimer(null)

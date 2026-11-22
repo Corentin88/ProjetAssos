@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { loadNotifications } from './lib/community'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { ErreurBoundary } from './components/ErreurBoundary'
 import { ToastProvider } from './hooks/useToast'
@@ -50,6 +51,13 @@ export default function App() {
     return () => window.removeEventListener('focus', refreshProfile)
   }, [])
   useEffect(() => { void revalidateSession() }, [key])
+  const notificationOwner = user?.statut === 'actif' ? user.id : undefined
+  useEffect(() => {
+    const refresh = () => { void loadNotifications(notificationOwner) }
+    refresh()
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [key, notificationOwner])
   useEffect(() => { void loadContent('public') }, [pathname])
   useEffect(() => {
     if (user?.role !== 'administrateur' || user.statut !== 'actif') {

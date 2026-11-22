@@ -12,6 +12,11 @@ export type UserStatus = 'actif' | 'suspendu'
 /** Méthodes d'authentification (§5 : mot de passe, compte Google, ou les deux) */
 export type AuthMethod = 'motdepasse' | 'google'
 
+export type ApiAvatar =
+  | { kind: 'DEFAULT' }
+  | { kind: 'PRESET'; preset: number }
+  | { kind: 'PERSONAL' | 'GOOGLE'; url: string }
+
 export interface Avatar {
   /** defaut : avatar du site ; initiales : avatar prédéfini coloré ;
    *  image : image personnelle (média) ; google : photo Google */
@@ -103,7 +108,30 @@ export interface Article {
   /** Carrousel de la page d'accueil (§26 — fonctionnement à préciser) */
   misEnAvant: boolean
   positionCarrousel?: number | null
+  trail?: Trail | null
   viewCount?: number
+}
+
+export interface TrailFields {
+  name: string
+  description: string
+  distance: number
+  elevationGain: number
+  elevationLoss: number
+  duration: number
+  difficulty: 'EASY' | 'MEDIUM' | 'HARD'
+}
+
+export interface GpxMedia {
+  id: string
+  nom: string
+  tailleKo: number
+  usages: number
+}
+
+export interface Trail extends TrailFields {
+  mapPreview: { segments: [number, number][][] }
+  gpxMediaId?: string
 }
 
 export interface CommentEditHistory {
@@ -115,7 +143,8 @@ export interface CommentModeration {
   motif: string
   precision?: string
   at: string
-  adminId: string
+  adminId: string | null
+  adminLabel?: string
   /** Contenu supprimé, conservé 6 mois côté administration (§31) */
   contenuSupprime: string
 }
@@ -123,10 +152,13 @@ export interface CommentModeration {
 export interface Comment {
   id: string
   articleId: string
+  articleTitre?: string
+  articleSlug?: string
   /** null → l'utilisateur a supprimé son compte (§12) */
   auteurId: string | null
   /** « Utilisateur supprimé » ou nom conservé après suspension (§10, §12) */
   auteurLabel: string
+  auteurAvatar?: ApiAvatar
   contenu: string
   createdAt: string
   updatedAt: string | null
@@ -134,6 +166,7 @@ export interface Comment {
   parentId: string | null
   /** Supprimé par son auteur (§30) */
   deletedByAuthor: boolean
+  deletedByAdmin?: boolean
   /** Supprimé par un administrateur avec motif (§31) */
   moderation: CommentModeration | null
   /** Historique des modifications, accessible aux administrateurs (§29) */
@@ -219,7 +252,7 @@ export interface Coordonnees {
 export interface AssociationPage {
   blocks: Block[]
   coordonnees: Coordonnees
-  updatedAt: string
+  updatedAt: string | null
 }
 
 export interface StatsData {

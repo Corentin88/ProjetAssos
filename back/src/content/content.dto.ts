@@ -1,4 +1,5 @@
 import { Type } from 'class-transformer';
+import { TrailDto } from './trails.js';
 import {
   ArrayMaxSize,
   ArrayUnique,
@@ -64,6 +65,10 @@ export class BlockDto {
 }
 
 export class ArticleDto {
+  @ValidateIf((_parent, value) => value != null)
+  @ValidateNested()
+  @Type(() => TrailDto)
+  trail?: TrailDto | null;
   @IsString()
   @MaxLength(255)
   titre: string;

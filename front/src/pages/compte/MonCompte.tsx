@@ -1,8 +1,7 @@
-import { useCurrentUser } from '../../lib/auth'
 import { NavLink, Outlet } from 'react-router-dom'
 import { Bell, MessageSquare, ShieldCheck, Trash2, UserCircle } from 'lucide-react'
-import { useDb } from '../../lib/db'
-import { unreadNotificationCount } from '../../lib/selectors'
+import { useCurrentUser } from '../../lib/auth'
+import { useNotifications } from '../../lib/community'
 import { RequireAuth } from '../../components/layout/guards'
 import { formatDate, formatMoisAnnee } from '../../lib/format'
 import { Avatar } from '../../components/ui/misc'
@@ -18,9 +17,9 @@ const SECTIONS = [
 ]
 
 function MonCompteLayout() {
-  useDb()
   const sessionUser = useCurrentUser()
-  const unread = sessionUser ? unreadNotificationCount(sessionUser.id) : 0
+  const { data: notifications } = useNotifications()
+  const unread = notifications.filter(n => !n.lue).length
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10">

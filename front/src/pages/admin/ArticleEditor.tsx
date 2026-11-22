@@ -1,6 +1,6 @@
 import { ContentImage } from '../../components/content/ContentImage'
-import { ApiError } from '../../lib/auth'
-import { useMemo, useState } from 'react'
+import { ApiError, protectedRequest } from '../../lib/auth'
+import { useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -13,13 +13,15 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import type { Article } from '../../types'
+import type { Article, TrailFields } from '../../types'
 import { db, useDb } from '../../lib/db'
 import { articleAction, saveArticle, useContentAction } from '../../lib/content'
 import { articleAuthorLabel, getMedia } from '../../lib/selectors'
 import { toInputDateTime, formatDateTime } from '../../lib/format'
 import { mediaUrl } from '../../lib/assets'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
+import { TrailEditor } from '../../components/admin/TrailEditor'
+import { TrailDetails } from '../../components/content/TrailDetails'
 import { BlockEditor } from '../../components/admin/BlockEditor'
 import { MediaPicker } from '../../components/admin/MediaPicker'
 import { ArticleStatutBadge } from '../../components/content/ArticleCard'
@@ -43,6 +45,12 @@ export function ArticleEditor() {
   return <ArticleForm key={id ?? 'nouveau'} existant={existant} />
 }
 
+function editableTrail(trail: Article['trail']): (TrailFields & { gpxMediaId?: string }) | null {
+  if (!trail) return null
+  const { name, description, distance, elevationGain, elevationLoss, duration, difficulty, gpxMediaId } = trail
+  return { name, description, distance, elevationGain, elevationLoss, duration, difficulty, gpxMediaId }
+}
+
 function ArticleForm({ existant }: { existant?: Article }) {
   const navigate = useNavigate()
   const { toast } = useToast()
@@ -52,6 +60,10 @@ function ArticleForm({ existant }: { existant?: Article }) {
   // État local du formulaire
   const [titre, setTitre] = useState(existant?.titre ?? '')
   const [blocks, setBlocks] = useState(existant?.blocks ?? [])
+  const [trail, setTrail] = useState(() => editableTrail(existant?.trail))
+  const [gpxFile, setGpxFile] = useState<File | null>(null)
+  const [saving, setSaving] = useState(false)
+  const pendingSave = useRef(false)
   const [categorieIds, setCategorieIds] = useState<string[]>(existant?.categorieIds ?? [])
   const [tagIds, setTagIds] = useState<string[]>(existant?.tagIds ?? [])
   const [coverMediaId, setCoverMediaId] = useState<string | null>(existant?.coverMediaId ?? null)
@@ -65,11 +77,33 @@ function ArticleForm({ existant }: { existant?: Article }) {
 
   const enCorbeille = existant?.statut === 'corbeille'
 
-  const sauver = () => {
+  const sauver = async () => {
     if (blocks.some(block => block.type === 'image' && (!block.mediaId || !block.alt?.trim()))) {
       throw new ApiError(400, 'Sélectionnez une image et renseignez son texte alternatif dans chaque bloc image.')
     }
-    return saveArticle({ titre, blocks, categorieIds, tagIds, coverMediaId }, existant?.id)
+    if (pendingSave.current) throw new ApiError(409, 'Un enregistrement est déjà en cours.')
+    pendingSave.current = true
+    setSaving(true)
+    try {
+      let gpxMediaId = trail?.gpxMediaId
+      if (trail) {
+        if (!trail.name.trim()) throw new ApiError(400, 'Renseignez le nom du parcours.')
+        if (gpxFile) {
+          if (gpxFile.size > 5 * 1024 * 1024) throw new ApiError(400, 'Le fichier GPX dépasse 5 Mio.')
+          const body = new FormData()
+          body.set('file', gpxFile)
+          gpxMediaId = (await protectedRequest<{ id: string }>('/admin/content/gpx', 'POST', body)).id
+          setTrail({ ...trail, gpxMediaId })
+          setGpxFile(null)
+        }
+        if (!gpxMediaId) throw new ApiError(400, 'Sélectionnez un fichier GPX pour le parcours.')
+      }
+      return await saveArticle({ titre, blocks, categorieIds, tagIds, coverMediaId,
+        trail: trail && gpxMediaId ? { ...trail, gpxMediaId } : null }, existant?.id)
+    } finally {
+      pendingSave.current = false
+      setSaving(false)
+    }
   }
   const enregistrer = () => effectuer(async () => {
     const article = await sauver()
@@ -96,6 +130,8 @@ function ArticleForm({ existant }: { existant?: Article }) {
     if (!article) return
     setTitre(article.titre)
     setBlocks(article.blocks)
+    setTrail(editableTrail(article.trail))
+    setGpxFile(null)
     setCategorieIds(article.categorieIds)
     setTagIds(article.tagIds)
     setCoverMediaId(article.coverMediaId)
@@ -145,14 +181,14 @@ function ArticleForm({ existant }: { existant?: Article }) {
               Retour
             </Link>
             <span className="mr-auto flex items-center gap-2">{statutBadge}</span>
-            <Button size="petit" onClick={() => enregistrer()}>
+            <Button size="petit" onClick={() => enregistrer()} disabled={saving}>
               <Save aria-hidden="true" className="h-4 w-4" />
               {existant?.statut === 'publie' ? 'Enregistrer la version' : 'Enregistrer le brouillon'}
             </Button>
             <Button
               size="petit"
               variant="secondaire"
-              onClick={previsualiser}
+              onClick={previsualiser} disabled={saving}
             >
               <Eye aria-hidden="true" className="h-4 w-4" />
               Prévisualiser
@@ -161,7 +197,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
               <>
                 <Button
                   size="petit"
-                  onClick={publier}
+                  onClick={publier} disabled={saving}
                 >
                   Valider la nouvelle version
                 </Button>
@@ -250,12 +286,13 @@ function ArticleForm({ existant }: { existant?: Article }) {
           <div className="carte p-6">
             <BlockEditor blocks={blocks} onChange={setBlocks} />
           </div>
+          <TrailEditor trail={trail} file={gpxFile} onChange={setTrail} onFile={setGpxFile} disabled={enCorbeille || saving} />
 
           {/* Réafficher la barre d'actions en fin de contenu : éviter de
               remonter tout l'article pour enregistrer ou publier */}
           {!enCorbeille ? (
             <div className="flex flex-wrap gap-3">
-              <Button onClick={() => enregistrer()}>
+              <Button onClick={() => enregistrer()} disabled={saving}>
                 <Save aria-hidden="true" className="h-5 w-5" />
                 {existant?.statut === 'publie' ? 'Enregistrer la version' : 'Enregistrer le brouillon'}
               </Button>
@@ -585,6 +622,7 @@ export function ArticlePreview() {
             )}
           </div>
         </div>
+        {article.trail && <TrailDetails trail={article.trail} />}
       </div>
     </div>
   )
