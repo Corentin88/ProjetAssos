@@ -13,6 +13,8 @@
 *.yml text eol=lf
 *.prisma text eol=lf
 
+*.sh text eol=lf
+
 # Scripts Windows
 *.bat text eol=crlf
 *.cmd text eol=crlf

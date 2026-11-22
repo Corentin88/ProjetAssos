@@ -1,0 +1,133 @@
+name: projetassos-production
+
+x-back-build: &back-build
+  context: ./back
+  dockerfile: Dockerfile.production
+
+x-database-url: &database-url postgresql://projetassos_app:${APP_DB_PASSWORD:?Définissez APP_DB_PASSWORD}@db:5432/projetassos
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: projetassos
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Définissez POSTGRES_PASSWORD}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Définissez APP_DB_PASSWORD}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./deploy/postgres-init.sh:/docker-entrypoint-initdb.d/10-projetassos.sh:ro
+    networks: [database]
+    healthcheck:
+      test: ["CMD-SHELL", 'PGPASSWORD="$$POSTGRES_PASSWORD" psql -XAt -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -c "SELECT 1" >/dev/null']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *logging
+
+  migrate:
+    profiles: [operations]
+    build:
+      <<: *back-build
+      target: migrate
+    environment:
+      DATABASE_URL: *database-url
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [database]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+
+  back:
+    build:
+      <<: *back-build
+      target: runtime
+    restart: unless-stopped
+    init: true
+    environment:
+      DATABASE_URL: *database-url
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?Définissez AUTH_JWT_SECRET}
+      API_ORIGIN: https://${PUBLIC_DOMAIN:?Définissez PUBLIC_DOMAIN}
+      FRONT_ORIGIN: https://${PUBLIC_DOMAIN:?Définissez PUBLIC_DOMAIN}
+      TRUST_PROXY_IP: ${EDGE_IP:-172.30.72.2}
+      SMTP_URL: ${SMTP_URL:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - media_storage:/app/storage
+    networks: [edge, database]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health', {signal: AbortSignal.timeout(3500)}).then(r => { if (!r.ok) process.exitCode = 1 }).catch(() => { process.exitCode = 1 })"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+    logging: *logging
+
+  front:
+    build:
+      context: ./front
+      dockerfile: Dockerfile.production
+    restart: unless-stopped
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?Définissez PUBLIC_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?Définissez ACME_EMAIL}
+    depends_on:
+      back:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      edge:
+        ipv4_address: ${EDGE_IP:-172.30.72.2}
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 10s
+    logging: *logging
+
+networks:
+  edge:
+    ipam:
+      config:
+        # Les IP dynamiques restent hors de EDGE_IP : sinon `back`, créé avant
+        # `front`, peut recevoir l'IP réservée à Caddy et bloquer son démarrage.
+        - subnet: ${EDGE_SUBNET:-172.30.72.0/24}
+          ip_range: ${EDGE_IP_RANGE:-172.30.72.128/25}
+  database:
+    internal: true
+
+volumes:
+  postgres_data:
+  media_storage:
+  caddy_data:
+  caddy_config:

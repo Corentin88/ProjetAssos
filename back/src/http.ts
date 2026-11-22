@@ -50,6 +50,7 @@ export function configureHttp(app: INestApplication) {
   const config = app.get(RuntimeConfig);
   const express: Application = app.getHttpAdapter().getInstance();
   express.disable('x-powered-by');
+  if (config.trustProxyIp) express.set('trust proxy', config.trustProxyIp);
   const retryAfter = createRequestLimit(180, 10_000);
   app.setGlobalPrefix('api/v1', {
     exclude: [{ path: '/', method: RequestMethod.GET }],

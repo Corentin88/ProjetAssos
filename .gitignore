@@ -12,6 +12,8 @@
 .env
 .env.*
 !.env.example
+!.env.production.example
+/backups/
 
 # Dépendances
 node_modules/

@@ -1,6 +1,7 @@
 import { Global, Injectable, Module } from '@nestjs/common';
 import { config } from 'dotenv';
 import { resolve } from 'node:path';
+import { isIP } from 'node:net';
 
 config({ path: resolve(process.cwd(), '../.env'), quiet: true });
 
@@ -20,9 +21,13 @@ export class RuntimeConfig {
   readonly googleClientId = process.env.GOOGLE_CLIENT_ID;
   readonly googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
   readonly googleRedirectUri = `${this.apiOrigin}/api/v1/auth/google/callback`;
+  readonly trustProxyIp = process.env.TRUST_PROXY_IP?.trim();
   readonly avatarDirectory = process.env.AVATAR_DIRECTORY || 'storage/avatars';
 
   constructor() {
+    if (this.trustProxyIp && !isIP(this.trustProxyIp)) {
+      throw new Error('TRUST_PROXY_IP doit être une adresse IP unique.');
+    }
     if (Buffer.byteLength(this.jwtSecret) < 32) {
       throw new Error('AUTH_JWT_SECRET doit contenir au moins 32 octets.');
     }
