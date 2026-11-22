@@ -33,3 +33,4 @@ Thumbs.db
 # Client Prisma généré
 /back/generated/
 /back/src/generated/
+/back/storage/
