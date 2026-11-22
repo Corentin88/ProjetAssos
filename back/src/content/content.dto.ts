@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayUnique,
   IsArray,
   IsBoolean,
@@ -12,6 +13,14 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+
+export class CarouselDto {
+  @IsArray()
+  @ArrayMaxSize(3)
+  @ArrayUnique()
+  @IsUUID(undefined, { each: true })
+  articleIds: string[];
+}
 
 export const blockTypes = {
   titre: 'HEADING',

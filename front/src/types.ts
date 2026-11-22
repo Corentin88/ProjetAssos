@@ -102,6 +102,7 @@ export interface Article {
   publicSnapshot: Block[] | null
   /** Carrousel de la page d'accueil (§26 — fonctionnement à préciser) */
   misEnAvant: boolean
+  positionCarrousel?: number | null
   viewCount?: number
 }
 

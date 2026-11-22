@@ -51,6 +51,10 @@ export function saveArticle(input: ArticleInput, id?: string) {
 type Action = 'publish' | 'schedule' | 'cancel-schedule' | 'unpublish' | 'discard-work' |
   'trash' | 'restore-draft' | 'restore-published' | 'delete'
 
+export function saveCarousel(articleIds: string[]) {
+  return mutate<void>('/carousel', 'PATCH', { articleIds })
+}
+
 export function articleAction(id: string, action: Action, options?: { at?: string; confirmed?: boolean }) {
   return mutate<Article | { deleted: true }>(`/articles/${id}/actions`, 'POST', { action, ...options })
     .then(result => 'deleted' in result ? null : result)

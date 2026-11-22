@@ -446,21 +446,14 @@ function ArticleForm({ existant }: { existant?: Article }) {
                 </Button> : null}
               </div>
               <div className="mt-5 border-t border-line pt-4">
-                <label htmlFor="art-une" className="flex items-start gap-3 text-[1.0625rem]">
-                  <input
-                    id="art-une"
-                    type="checkbox"
-                    checked={false}
-                    disabled
-                    className="mt-2 h-6 w-6 shrink-0 accent-forest"
-                  />
-                  <span>
-                    <strong>Mettre à la une</strong>
-                    <span className="block text-[0.9375rem] text-mist">
-                      Le mode de sélection du carrousel reste à définir.
-                    </span>
-                  </span>
-                </label>
+                <p className="mb-2 text-[0.9375rem] text-mist">
+                  {existant?.positionCarrousel != null
+                    ? `Article sélectionné à la une, position ${existant.positionCarrousel}.`
+                    : 'La une se règle depuis la liste des articles.'}
+                </p>
+                <Link to="/admin/articles?carrousel=1" className={buttonClasses('secondaire', 'petit')}>
+                  Gérer la une
+                </Link>
               </div>
             </section>
 

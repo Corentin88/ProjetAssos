@@ -95,7 +95,8 @@ function present(article: StoredArticle, admin: boolean) {
       admin && working && published && article.status === 'PUBLISHED'
         ? presentBlocks(published)
         : null,
-    misEnAvant: false,
+    misEnAvant: article.carouselPosition !== null,
+    positionCarrousel: article.carouselPosition,
   };
 }
 
@@ -270,6 +271,65 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  updateCarousel(actor: Principal, articleIds: string[]) {
+    return this.prisma.$transaction(async (tx) => {
+      await lockAdmin(tx, this.sessions, actor);
+      // Sérialiser les remplacements de sélection, y compris lorsque la liste est vide.
+      await tx.$queryRaw`SELECT 1 AS locked FROM pg_advisory_xact_lock(8476103)`;
+      const selected = articleIds.length
+        ? Prisma.sql`OR id IN (${Prisma.join(articleIds.map((id) => Prisma.sql`${id}::uuid`))})`
+        : Prisma.empty;
+      await tx.$queryRaw`
+        SELECT id FROM articles
+        WHERE carousel_position IS NOT NULL ${selected}
+        ORDER BY id FOR UPDATE
+      `;
+      const eligible = await tx.article.count({
+        where: { id: { in: articleIds }, status: 'PUBLISHED' },
+      });
+      if (eligible !== articleIds.length) throw new ConflictException();
+
+      const previous = await tx.article.findMany({
+        where: { carouselPosition: { not: null } },
+        orderBy: { carouselPosition: 'asc' },
+        select: { id: true, carouselPosition: true },
+      });
+      const positions = new Map(articleIds.map((id, index) => [id, index + 1]));
+      const changed = new Set(
+        previous
+          .filter((entry) => positions.get(entry.id) !== entry.carouselPosition)
+          .map((entry) => entry.id),
+      );
+      for (const id of articleIds) {
+        if (!previous.some((entry) => entry.id === id)) changed.add(id);
+      }
+      if (!changed.size) return;
+
+      // Libérer les places avant de les permuter sous la contrainte d’unicité.
+      await tx.article.updateMany({
+        where: { id: { in: [...changed] }, carouselPosition: { not: null } },
+        data: { carouselPosition: null },
+      });
+      for (const id of changed) {
+        const carouselPosition = positions.get(id);
+        if (carouselPosition !== undefined) {
+          await tx.article.update({
+            where: { id },
+            data: { carouselPosition },
+          });
+        }
+        await contentLog(
+          tx,
+          actor.userId,
+          'ARTICLE',
+          id,
+          'UPDATE',
+          'Sélection du carrousel modifiée.',
+        );
+      }
+    });
+  }
+
   action(actor: Principal, id: string, dto: ArticleActionDto) {
     return this.change(actor, id, async (tx, article) => {
       const working = article.versions.find(
@@ -281,7 +341,7 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
       const update = (status: ArticleStatus) =>
         tx.article.update({
           where: { id },
-          data: { status, scheduledAt: null },
+          data: { status, scheduledAt: null, carouselPosition: null },
         });
       const log = (
         action: Prisma.ActivityLogUncheckedCreateInput['action'],
@@ -324,7 +384,11 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
           if (article.status !== 'PUBLISHED') throw new ConflictException();
           await tx.article.update({
             where: { id },
-            data: { status: 'DRAFT', publishedAt: null },
+            data: {
+              status: 'DRAFT',
+              publishedAt: null,
+              carouselPosition: null,
+            },
           });
           await log('UNPUBLISH', 'Article retiré de la publication.');
           break;

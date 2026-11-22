@@ -1,4 +1,5 @@
 import { ContentImage } from '../../components/content/ContentImage'
+import { CarouselSelection } from '../../components/admin/CarouselSelection'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Eye, FileText, ListFilter, Pencil, RotateCcw, Search, Trash2, Undo2 } from 'lucide-react'
@@ -33,6 +34,13 @@ export function ArticlesAdmin() {
   const { toast } = useToast()
   const effectuer = useContentAction()
   const [params, setParams] = useSearchParams()
+  const carrouselOuvert = params.get('carrousel') === '1'
+  const setCarrouselOuvert = (ouvert: boolean) => setParams(actuels => {
+    const suivants = new URLSearchParams(actuels)
+    if (ouvert) suivants.set('carrousel', '1')
+    else suivants.delete('carrousel')
+    return suivants
+  }, { replace: true })
   const chargement = useFakeLoad(400)
   const version = useDbVersion()
 
@@ -227,11 +235,15 @@ export function ArticlesAdmin() {
         titre="Articles"
         description="Créez, publiez, programmez et archivez les actualités de l'association. Un article publié modifié reste visible dans sa version publique jusqu'à la validation de la nouvelle version."
       >
+        <Button variant="secondaire" onClick={() => setCarrouselOuvert(true)}>
+          Gérer la une
+        </Button>
         <Link to="/admin/articles/nouveau" className={buttonClasses('primaire')}>
           <FileText aria-hidden="true" className="h-5 w-5" />
           Nouvel article
         </Link>
       </AdminPageHead>
+      {carrouselOuvert ? <CarouselSelection onClose={() => setCarrouselOuvert(false)} /> : null}
 
       <div className="mx-auto max-w-6xl px-4 py-8 md:px-8">
         {/* Onglets de statut */}

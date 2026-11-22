@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRight, Newspaper, Search, SlidersHorizontal } from 'lucide-react'
 import { useDb } from '../../lib/db'
+import { articlesDuCarrousel } from '../../lib/carousel'
 import { getMedia, publishedArticles } from '../../lib/selectors'
 import { ArticleCarousel } from '../../components/content/ArticleCarousel'
 import { ArticleCard } from '../../components/content/ArticleCard'
@@ -23,7 +24,7 @@ export function Accueil() {
 
   const articles = publishedArticles()
   const derniers = articles.slice(0, 5) // 5 derniers articles (§26)
-  const aLaUne = articles.filter((a) => a.misEnAvant).slice(0, 3)
+  const aLaUne = articlesDuCarrousel(articles)
   const presentation = getMedia('m-village')
 
   const lancerRecherche = (e: FormEvent<HTMLFormElement>) => {

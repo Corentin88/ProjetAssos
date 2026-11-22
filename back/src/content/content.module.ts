@@ -34,6 +34,7 @@ import { ArticlesService } from './articles.service.js';
 import {
   ArticleActionDto,
   ArticleDto,
+  CarouselDto,
   MediaDto,
   NamedDto,
 } from './content.dto.js';
@@ -131,6 +132,12 @@ class AdminContentController {
   @Get()
   content() {
     return snapshot(this.prisma, this.articles, this.media, true);
+  }
+
+  @Patch('carousel')
+  @HttpCode(204)
+  carousel(@CurrentUser() actor: Principal, @Body() dto: CarouselDto) {
+    return this.articles.updateCarousel(actor, dto.articleIds);
   }
 
   @Post('articles')

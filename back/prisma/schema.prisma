@@ -248,14 +248,15 @@ model AccountToken {
 }
 
 model Article {
-  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId      String?       @map("user_id") @db.Uuid
-  slug        String        @unique @db.VarChar(255)
-  status      ArticleStatus @default(DRAFT)
-  publishedAt DateTime?     @map("published_at") @db.Timestamptz(6)
-  scheduledAt DateTime?     @map("scheduled_at") @db.Timestamptz(6)
-  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String?       @map("user_id") @db.Uuid
+  slug             String        @unique @db.VarChar(255)
+  status           ArticleStatus @default(DRAFT)
+  publishedAt      DateTime?     @map("published_at") @db.Timestamptz(6)
+  scheduledAt      DateTime?     @map("scheduled_at") @db.Timestamptz(6)
+  carouselPosition Int?          @unique @map("carousel_position")
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   user          User?            @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   versions      ArticleVersion[]
