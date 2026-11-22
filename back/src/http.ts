@@ -7,7 +7,8 @@ import {
   RequestMethod,
   ValidationPipe,
 } from '@nestjs/common';
-import type { NextFunction, Request, Response } from 'express';
+import type { Application, NextFunction, Request, Response } from 'express';
+import { createRequestLimit } from './auth/request-limit.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { RuntimeConfig } from './config/runtime.module.js';
 
@@ -38,17 +39,18 @@ class ApiErrors implements ExceptionFilter {
       429: 'Trop de tentatives. Réessayez plus tard.',
       503: 'Service temporairement indisponible.',
     };
-    response
-      .status(status)
-      .json({
-        statusCode: status,
-        message: labels[status] ?? 'Erreur interne.',
-      });
+    response.status(status).json({
+      statusCode: status,
+      message: labels[status] ?? 'Erreur interne.',
+    });
   }
 }
 
 export function configureHttp(app: INestApplication) {
   const config = app.get(RuntimeConfig);
+  const express: Application = app.getHttpAdapter().getInstance();
+  express.disable('x-powered-by');
+  const retryAfter = createRequestLimit(180, 10_000);
   app.setGlobalPrefix('api/v1', {
     exclude: [{ path: '/', method: RequestMethod.GET }],
   });
@@ -56,15 +58,32 @@ export function configureHttp(app: INestApplication) {
     origin: config.frontOrigin,
     credentials: true,
     exposedHeaders: ['Retry-After'],
+    allowedHeaders: ['Authorization', 'Content-Type'],
   });
   app.use(
     '/api/v1',
-    (_request: Request, response: Response, next: NextFunction) => {
+    (request: Request, response: Response, next: NextFunction) => {
       response.set({
         'Cache-Control': 'no-store',
         'Referrer-Policy': 'no-referrer',
         'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY',
+        'Content-Security-Policy':
+          "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+        ...(config.production
+          ? { 'Strict-Transport-Security': 'max-age=31536000' }
+          : {}),
       });
+      const retry = retryAfter(
+        request.ip ?? request.socket.remoteAddress ?? 'unknown',
+      );
+      if (retry) {
+        response.set('Retry-After', String(retry)).status(429).json({
+          statusCode: 429,
+          message: 'Trop de tentatives. Réessayez plus tard.',
+        });
+        return;
+      }
       next();
     },
   );

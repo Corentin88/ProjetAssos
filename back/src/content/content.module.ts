@@ -112,7 +112,9 @@ class PublicContentController {
   @Get('articles/:id/gpx')
   @UseGuards(AccessGuard)
   async gpx(@Param('id', ParseUUIDPipe) id: string) {
-    return new StreamableFile(await this.trails.download(id), {
+    const { stream, size } = await this.trails.download(id);
+    return new StreamableFile(stream, {
+      length: size,
       type: 'application/gpx+xml',
       disposition: 'attachment; filename="parcours.gpx"',
     });
@@ -126,7 +128,13 @@ function classification(kind: string): Classification {
 }
 
 const uploadOptions = {
-  limits: { fileSize: 8 * 1024 * 1024, files: 1, fields: 2 },
+  limits: {
+    fileSize: 8 * 1024 * 1024,
+    files: 1,
+    fields: 2,
+    fieldSize: 4096,
+    parts: 4,
+  },
 };
 
 @Controller('admin/content')
@@ -243,8 +251,15 @@ class AdminContentController {
   }
 
   @Post('gpx')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: gpxSizeLimit, files: 1, fields: 0 } }))
-  uploadGpx(@CurrentUser() actor: Principal, @UploadedFile() file?: { buffer: Buffer; originalname: string }) {
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: gpxSizeLimit, files: 1, fields: 0, parts: 2 },
+    }),
+  )
+  uploadGpx(
+    @CurrentUser() actor: Principal,
+    @UploadedFile() file?: { buffer: Buffer; originalname: string },
+  ) {
     return this.trails.upload(actor, file?.buffer, file?.originalname);
   }
 
@@ -262,7 +277,7 @@ class AdminContentController {
   @HttpCode(204)
   @UseInterceptors(
     FileInterceptor('image', {
-      limits: { ...uploadOptions.limits, fields: 0 },
+      limits: { ...uploadOptions.limits, fields: 0, parts: 2 },
     }),
   )
   replace(

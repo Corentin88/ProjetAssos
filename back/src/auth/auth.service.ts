@@ -3,6 +3,7 @@ import {
   Injectable,
   UnauthorizedException,
   BadRequestException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { argon2id, hash, verify } from 'argon2';
 import { PrismaService } from '../prisma/prisma.module.js';
@@ -10,13 +11,28 @@ import type { ChangePasswordDto, LoginDto, RegisterDto } from './auth.dto.js';
 import { lockUser, SessionService } from './session.service.js';
 import type { Principal } from './session.service.js';
 
+let passwordWork = 0;
+
+async function withPasswordWork<T>(operation: () => Promise<T>) {
+  // Chaque opération Argon2 réserve 64 Mio. Borne commune aux flux qui calculent ou vérifient un hash.
+  if (passwordWork >= 4) throw new ServiceUnavailableException();
+  passwordWork++;
+  try {
+    return await operation();
+  } finally {
+    passwordWork--;
+  }
+}
+
 export function hashPassword(password: string) {
-  return hash(password, {
-    type: argon2id,
-    memoryCost: 65_536,
-    timeCost: 3,
-    parallelism: 1,
-  });
+  return withPasswordWork(() =>
+    hash(password, {
+      type: argon2id,
+      memoryCost: 65_536,
+      timeCost: 3,
+      parallelism: 1,
+    }),
+  );
 }
 
 @Injectable()
@@ -67,8 +83,13 @@ export class AuthService {
       candidate?.passwordHash ??
       (await (this.dummyHash ??= hashPassword(
         randomBytes(32).toString('hex'),
-      )));
-    const matched = await verify(hashToCheck, dto.password);
+      ).catch((error) => {
+        this.dummyHash = undefined;
+        throw error;
+      })));
+    const matched = await withPasswordWork(() =>
+      verify(hashToCheck, dto.password),
+    );
     if (
       !candidate?.passwordHash ||
       candidate.status !== 'ACTIVE' ||
@@ -129,7 +150,9 @@ export class AuthService {
     });
     if (
       !user.passwordHash ||
-      !(await verify(user.passwordHash, dto.currentPassword))
+      !(await withPasswordWork(() =>
+        verify(user.passwordHash!, dto.currentPassword),
+      ))
     )
       throw new UnauthorizedException();
     const nextHash = await hashPassword(dto.password);

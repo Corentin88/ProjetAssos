@@ -33,6 +33,7 @@ import {
 import { AvatarDto, NamesDto } from '../auth/auth.dto.js';
 import { lockUser, SessionService } from '../auth/session.service.js';
 import type { Principal } from '../auth/session.service.js';
+import { imageFormat } from '../content/image-format.js';
 import { RuntimeConfig } from '../config/runtime.module.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import {
@@ -229,16 +230,15 @@ class ProfilesService {
   }
 
   private async prepareImage(input: Buffer) {
+    const format = imageFormat(input);
+    if (!format) throw new UnsupportedMediaTypeException();
     try {
       const image = sharp(input, {
         limitInputPixels: 16_000_000,
         failOn: 'warning',
       });
       const metadata = await image.metadata();
-      if (
-        !['jpeg', 'png', 'webp'].includes(metadata.format ?? '') ||
-        (metadata.pages ?? 1) > 1
-      ) {
+      if (metadata.format !== format || (metadata.pages ?? 1) > 1) {
         throw new UnsupportedMediaTypeException();
       }
       return await image
@@ -277,7 +277,7 @@ class ProfilesController {
   @UseGuards(AuthRateGuard)
   @UseInterceptors(
     FileInterceptor('image', {
-      limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0, parts: 1 },
+      limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0, parts: 2 },
     }),
   )
   upload(

@@ -8,6 +8,7 @@ import {
   IsIn,
   IsISO8601,
   IsNotEmpty,
+  IsObject,
   IsString,
   IsUUID,
   MaxLength,
@@ -59,6 +60,7 @@ export class BlockDto {
 
   @ValidateIf((_object, value) => value !== undefined)
   @IsArray()
+  @ArrayMaxSize(100)
   @IsString({ each: true })
   @MaxLength(4000, { each: true })
   items?: string[];
@@ -66,6 +68,7 @@ export class BlockDto {
 
 export class ArticleDto {
   @ValidateIf((_parent, value) => value != null)
+  @IsObject()
   @ValidateNested()
   @Type(() => TrailDto)
   trail?: TrailDto | null;
@@ -74,16 +77,20 @@ export class ArticleDto {
   titre: string;
 
   @IsArray()
+  @ArrayMaxSize(200)
+  @IsObject({ each: true })
   @ValidateNested({ each: true })
   @Type(() => BlockDto)
   blocks: BlockDto[];
 
   @IsArray()
+  @ArrayMaxSize(100)
   @ArrayUnique()
   @IsUUID(undefined, { each: true })
   categorieIds: string[];
 
   @IsArray()
+  @ArrayMaxSize(100)
   @ArrayUnique()
   @IsUUID(undefined, { each: true })
   tagIds: string[];

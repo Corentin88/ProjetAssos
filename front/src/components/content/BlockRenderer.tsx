@@ -115,11 +115,11 @@ export function BlockView({ block, sousPage = false }: { block: Block; sousPage?
       const libelle = block.text || url
       const classe = 'inline-flex min-h-11 items-center rounded-lg font-bold text-forest underline underline-offset-4 hover:bg-leaf-pale'
       // Les routes internes restent compatibles avec HashRouter. Les liens édités autorisent seulement les protocoles usuels.
-      if (/^\/(?![\/\\])/.test(url)) {
+      if (/^\/(?![\/\\])[^\\\r\n\t]*$/.test(url)) {
         return <p><Link to={url} className={classe}>{libelle}</Link></p>
       }
       const adresse = lireAdresse(url)
-      if (!adresse || !['http:', 'https:', 'mailto:', 'tel:'].includes(adresse.protocol)) {
+      if (!adresse || adresse.username || adresse.password || !['http:', 'https:', 'mailto:', 'tel:'].includes(adresse.protocol)) {
         return libelle ? <p>{libelle}</p> : null
       }
       return (

@@ -16,6 +16,7 @@ import type { Principal } from '../auth/session.service.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { MediaDto } from './content.dto.js';
 import { contentLog, lockAdmin } from './content.shared.js';
+import { imageFormat } from './image-format.js';
 import { gpxLibrary, gpxPath } from './trails.js';
 
 const library = {
@@ -226,9 +227,15 @@ export class MediaService {
     await this.remove(path);
   }
 
-  private async lock(tx: Prisma.TransactionClient, id: string, includeGpx = false) {
+  private async lock(
+    tx: Prisma.TransactionClient,
+    id: string,
+    includeGpx = false,
+  ) {
     await tx.$queryRaw`SELECT id FROM media WHERE id = ${id}::uuid FOR UPDATE`;
-    const item = await tx.media.findFirst({ where: { id, OR: includeGpx ? [library, gpxLibrary] : [library] } });
+    const item = await tx.media.findFirst({
+      where: { id, OR: includeGpx ? [library, gpxLibrary] : [library] },
+    });
     if (!item) throw new NotFoundException();
     return item;
   }
@@ -243,7 +250,9 @@ export class MediaService {
 
   private async remove(path: string) {
     try {
-      await unlink(path.startsWith('trails/') ? gpxPath(path) : this.resolve(path));
+      await unlink(
+        path.startsWith('trails/') ? gpxPath(path) : this.resolve(path),
+      );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
         this.logger.warn('Un fichier média doit être purgé.');
@@ -252,22 +261,15 @@ export class MediaService {
 
   private async decode(buffer?: Buffer) {
     if (!buffer?.length) throw new BadRequestException();
-    const jpeg = buffer[0] === 255 && buffer[1] === 216 && buffer[2] === 255;
-    const png = buffer
-      .subarray(0, 8)
-      .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-    const webp =
-      buffer.toString('ascii', 0, 4) === 'RIFF' &&
-      buffer.toString('ascii', 8, 12) === 'WEBP';
-    if (!jpeg && !png && !webp) throw new UnsupportedMediaTypeException();
+    const extension = imageFormat(buffer);
+    if (!extension) throw new UnsupportedMediaTypeException();
     try {
       const image = sharp(buffer, {
         limitInputPixels: 24_000_000,
         failOn: 'warning',
       });
       const metadata = await image.metadata();
-      const extension = metadata.format as keyof typeof formats;
-      if (!Object.hasOwn(formats, extension) || (metadata.pages ?? 1) !== 1)
+      if (metadata.format !== extension || (metadata.pages ?? 1) !== 1)
         throw new UnsupportedMediaTypeException();
       const data = await image.autoOrient().toFormat(extension).toBuffer();
       if (data.length > 10 * 1024 * 1024) throw new BadRequestException();

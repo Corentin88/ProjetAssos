@@ -1,13 +1,13 @@
-import { useEffect } from 'react'
+import { lazy, useEffect, useRef } from 'react'
 import { loadNotifications } from './lib/community'
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { matchPath, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { ErreurBoundary } from './components/ErreurBoundary'
 import { ToastProvider } from './hooks/useToast'
 import { PublicLayout } from './components/layout/PublicLayout'
 import { AdminLayout } from './components/layout/AdminLayout'
 import { RequireAdmin, RequireAuth } from './components/layout/guards'
 import { restoreSession, revalidateSession, useCurrentUser } from './lib/auth'
-import { clearAdminContent, loadContent } from './lib/content'
+import { clearAdminContent, ensureContent } from './lib/content'
 import { ContentGate } from './components/content/ContentGate'
 
 // Pages publiques
@@ -29,21 +29,24 @@ import { NotificationsPage } from './pages/compte/NotificationsPage'
 import { SuppressionCompte } from './pages/compte/SuppressionCompte'
 
 // Administration
-import { Dashboard } from './pages/admin/Dashboard'
-import { ArticlesAdmin } from './pages/admin/ArticlesAdmin'
-import { ArticleEditor, ArticlePreview } from './pages/admin/ArticleEditor'
-import { CategoriesTagsAdmin } from './pages/admin/CategoriesTagsAdmin'
-import { CommentairesAdmin } from './pages/admin/CommentairesAdmin'
-import { MediasAdmin } from './pages/admin/MediasAdmin'
-import { UtilisateursAdmin, UtilisateurDetail } from './pages/admin/UtilisateursAdmin'
-import { MessagesAdmin } from './pages/admin/MessagesAdmin'
-import { AssociationAdmin } from './pages/admin/AssociationAdmin'
-import { StatistiquesAdmin } from './pages/admin/StatistiquesAdmin'
-import { JournalAdmin } from './pages/admin/JournalAdmin'
+const Dashboard = lazy(() => import('./pages/admin/Dashboard').then(module => ({ default: module.Dashboard })))
+const ArticlesAdmin = lazy(() => import('./pages/admin/ArticlesAdmin').then(module => ({ default: module.ArticlesAdmin })))
+const ArticleEditor = lazy(() => import('./pages/admin/ArticleEditor').then(module => ({ default: module.ArticleEditor })))
+const ArticlePreview = lazy(() => import('./pages/admin/ArticleEditor').then(module => ({ default: module.ArticlePreview })))
+const CategoriesTagsAdmin = lazy(() => import('./pages/admin/CategoriesTagsAdmin').then(module => ({ default: module.CategoriesTagsAdmin })))
+const CommentairesAdmin = lazy(() => import('./pages/admin/CommentairesAdmin').then(module => ({ default: module.CommentairesAdmin })))
+const MediasAdmin = lazy(() => import('./pages/admin/MediasAdmin').then(module => ({ default: module.MediasAdmin })))
+const UtilisateursAdmin = lazy(() => import('./pages/admin/UtilisateursAdmin').then(module => ({ default: module.UtilisateursAdmin })))
+const UtilisateurDetail = lazy(() => import('./pages/admin/UtilisateursAdmin').then(module => ({ default: module.UtilisateurDetail })))
+const MessagesAdmin = lazy(() => import('./pages/admin/MessagesAdmin').then(module => ({ default: module.MessagesAdmin })))
+const AssociationAdmin = lazy(() => import('./pages/admin/AssociationAdmin').then(module => ({ default: module.AssociationAdmin })))
+const StatistiquesAdmin = lazy(() => import('./pages/admin/StatistiquesAdmin').then(module => ({ default: module.StatistiquesAdmin })))
+const JournalAdmin = lazy(() => import('./pages/admin/JournalAdmin').then(module => ({ default: module.JournalAdmin })))
 
 export default function App() {
   const { key, pathname } = useLocation()
   const user = useCurrentUser()
+  const adminOwner = useRef<string>()
   useEffect(() => {
     void restoreSession()
     const refreshProfile = () => { void revalidateSession() }
@@ -58,13 +61,18 @@ export default function App() {
     window.addEventListener('focus', refresh)
     return () => window.removeEventListener('focus', refresh)
   }, [key, pathname, notificationOwner])
-  useEffect(() => { void loadContent('public') }, [pathname])
   useEffect(() => {
-    if (user?.role !== 'administrateur' || user.statut !== 'actif') {
-      clearAdminContent()
-      return
+    if (matchPath('/', pathname) || matchPath('/actualites/*', pathname) || matchPath('/association', pathname)) {
+      void ensureContent('public')
     }
-    if (pathname.startsWith('/admin')) void loadContent('admin')
+  }, [pathname])
+  useEffect(() => {
+    const owner = user?.role === 'administrateur' && user.statut === 'actif' ? user.id : undefined
+    if (adminOwner.current !== owner) {
+      clearAdminContent()
+      adminOwner.current = owner
+    }
+    if (owner && matchPath('/admin/*', pathname)) void ensureContent('admin')
   }, [pathname, user?.id, user?.role, user?.statut])
 
   return (

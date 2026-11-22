@@ -9,7 +9,10 @@ import {
 } from '@nestjs/common';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsArray,
+  IsDefined,
+  IsObject,
   IsString,
   MaxLength,
   ValidateNested,
@@ -49,10 +52,16 @@ class CoordinatesDto {
 
 class AssociationDto {
   @IsArray()
+  @ArrayMaxSize(200)
+  @IsObject({ each: true })
   @ValidateNested({ each: true })
   @Type(() => BlockDto)
   blocks: BlockDto[];
-  @ValidateNested() @Type(() => CoordinatesDto) coordonnees: CoordinatesDto;
+  @IsDefined()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => CoordinatesDto)
+  coordonnees: CoordinatesDto;
 }
 
 const include = { blocks: { orderBy: { position: 'asc' as const } } };

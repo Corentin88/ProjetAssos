@@ -1,30 +1,51 @@
 import { useRef } from 'react'
 import { useToast } from '../hooks/useToast'
 import type { Article, Block, TrailFields } from '../types'
-import { apiUrl, authErrorMessage, protectedRequest } from './auth'
+import { ApiError, apiUrl, authErrorMessage, protectedRequest } from './auth'
 import { setContent, setContentError } from './db'
 import type { ContentSnapshot } from './db'
 
 type Scope = 'public' | 'admin'
 const requests = { public: 0, admin: 0 }
+const current: Record<Scope, Promise<void> | undefined> = { public: undefined, admin: undefined }
+const loadedAt = { public: 0, admin: 0 }
 
-export async function loadContent(scope: Scope) {
+export function ensureContent(scope: Scope) {
+  if (current[scope]) return current[scope]
+  if (Date.now() - loadedAt[scope] >= 15_000) return loadContent(scope)
+}
+
+export function loadContent(scope: Scope) {
   const revision = ++requests[scope]
-  try {
-    const data = scope === 'admin'
-      ? await protectedRequest<ContentSnapshot>('/admin/content')
-      : await fetch(apiUrl('/content'), { signal: AbortSignal.timeout(20000) }).then(async response => {
-        if (!response.ok) throw new Error()
-        return await response.json() as ContentSnapshot
-      })
-    if (revision === requests[scope]) setContent(scope, data)
-  } catch {
-    if (revision === requests[scope]) setContentError(scope)
-  }
+  const task = (async () => {
+    try {
+      const data = scope === 'admin'
+        ? await protectedRequest<ContentSnapshot>('/admin/content')
+        : await fetch(apiUrl('/content'), { signal: AbortSignal.timeout(20000) }).then(async response => {
+          if (!response.ok) throw new Error()
+          return await response.json() as ContentSnapshot
+        })
+      if (revision === requests[scope]) {
+        loadedAt[scope] = Date.now()
+        setContent(scope, data)
+      }
+    } catch (error) {
+      if (revision !== requests[scope]) return
+      loadedAt[scope] = 0
+      if (scope === 'admin' && error instanceof ApiError && [401, 403].includes(error.status)) setContent('admin')
+      setContentError(scope)
+    } finally {
+      if (revision === requests[scope]) current[scope] = undefined
+    }
+  })()
+  current[scope] = task
+  return task
 }
 
 export function clearAdminContent() {
   requests.admin += 1
+  current.admin = undefined
+  loadedAt.admin = 0
   setContent('admin')
 }
 

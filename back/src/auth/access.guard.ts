@@ -11,6 +11,7 @@ import { Reflector } from '@nestjs/core';
 import type { Request, Response } from 'express';
 import type { UserRole } from '../../generated/prisma/client.js';
 import { RuntimeConfig } from '../config/runtime.module.js';
+import { createRequestLimit } from './request-limit.js';
 import { SessionService } from './session.service.js';
 import type { Principal } from './session.service.js';
 
@@ -50,7 +51,7 @@ export class RoleGuard implements CanActivate {
     const { principal } = context
       .switchToHttp()
       .getRequest<AuthenticatedRequest>();
-    if (roles?.length && !roles.includes(principal.role))
+    if (roles?.length && (!principal || !roles.includes(principal.role)))
       throw new ForbiddenException();
     return true;
   }
@@ -78,30 +79,18 @@ export class BrowserOriginGuard implements CanActivate {
 
 @Injectable()
 export class AuthRateGuard implements CanActivate {
-  private readonly windows = new Map<
-    string,
-    { until: number; count: number }
-  >();
+  private readonly retryAfter = createRequestLimit(30);
 
   canActivate(context: ExecutionContext) {
     const request = context.switchToHttp().getRequest<Request>();
-    const response = context.switchToHttp().getResponse<Response>();
-    const key = request.ip ?? request.socket.remoteAddress ?? 'unknown';
-    const now = Date.now();
-    let window = this.windows.get(key);
-    if (!window || window.until <= now) {
-      if (this.windows.size >= 2000) {
-        for (const [ip, entry] of this.windows) {
-          if (entry.until <= now) this.windows.delete(ip);
-        }
-        if (this.windows.size >= 2000 && !this.windows.has(key))
-          throw new HttpException('', 429);
-      }
-      window = { count: 0, until: now + 60_000 };
-      this.windows.set(key, window);
-    }
-    if (++window.count > 30) {
-      response.setHeader('Retry-After', Math.ceil((window.until - now) / 1000));
+    const retry = this.retryAfter(
+      request.ip ?? request.socket.remoteAddress ?? 'unknown',
+    );
+    if (retry) {
+      context
+        .switchToHttp()
+        .getResponse<Response>()
+        .setHeader('Retry-After', retry);
       throw new HttpException('', 429);
     }
     return true;

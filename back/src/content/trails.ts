@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   BadRequestException,
@@ -49,6 +49,9 @@ export function parseGpx(file: Buffer) {
       throw error;
     });
     parser.on('doctype', () => {
+      throw new Error();
+    });
+    parser.on('processinginstruction', () => {
       throw new Error();
     });
     parser.on('opentag', (tag) => {
@@ -243,8 +246,17 @@ export class TrailsService {
       include: { gpxMedia: { select: { path: true } } },
     });
     if (!trail) throw new NotFoundException();
-    return readFile(gpxPath(trail.gpxMedia.path)).catch(() => {
+    const file = await open(gpxPath(trail.gpxMedia.path), 'r').catch(() => {
       throw new NotFoundException();
     });
+    try {
+      const stats = await file.stat();
+      if (!stats.isFile() || stats.size < 1 || stats.size > gpxSizeLimit)
+        throw new NotFoundException();
+      return { stream: file.createReadStream(), size: stats.size };
+    } catch {
+      await file.close().catch(() => {});
+      throw new NotFoundException();
+    }
   }
 }

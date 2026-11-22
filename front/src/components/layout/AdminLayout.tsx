@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { Suspense, useEffect, useRef } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { SkipLink } from '../ui/nav'
 import { CommandesAffichage, useAffichage } from './Affichage'
@@ -296,7 +296,9 @@ export function AdminLayout() {
 
         {/* Contenu */}
         <main id="contenu-admin" tabIndex={-1} className={`min-w-0 flex-1 scroll-mt-20 outline-none ${navigationCompacte ? '' : 'lg:scroll-mt-0'}`}>
-          <Outlet context={messages} />
+          <Suspense fallback={<p className="p-6" role="status">Chargement de la page…</p>}>
+            <Outlet context={messages} />
+          </Suspense>
         </main>
       </div>
 
