@@ -177,7 +177,7 @@ export class AssociationService {
         'ASSOCIATION',
         entity.id,
         current ? 'UPDATE' : 'CREATE',
-        'Page Association enregistrée.',
+        'Contenu et coordonnées de l’association enregistrés.',
       );
       return represent(entity);
     });

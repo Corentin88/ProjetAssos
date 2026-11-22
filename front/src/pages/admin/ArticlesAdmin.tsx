@@ -13,9 +13,8 @@ import { AdminPageHead } from '../../components/layout/AdminLayout'
 import { ArticleStatutBadge } from '../../components/content/ArticleCard'
 import { buttonClasses, Button, Field, Input, Select } from '../../components/ui/form'
 import { ConfirmDialog } from '../../components/ui/overlay'
-import { Alert, Badge, EmptyState, Skeleton } from '../../components/ui/feedback'
+import { Alert, Badge, EmptyState } from '../../components/ui/feedback'
 import { useToast } from '../../hooks/useToast'
-import { useFakeLoad } from '../../hooks/common'
 
 type Onglet = 'publies' | 'programmes' | 'brouillons' | 'corbeille'
 
@@ -41,7 +40,6 @@ export function ArticlesAdmin() {
     else suivants.delete('carrousel')
     return suivants
   }, { replace: true })
-  const chargement = useFakeLoad(400)
   const version = useDbVersion()
 
   const onglet = (params.get('onglet') as Onglet) ?? 'publies'
@@ -311,18 +309,7 @@ export function ArticlesAdmin() {
           {articles.length} article{articles.length > 1 ? 's' : ''} dans cet onglet
         </p>
 
-        {chargement ? (
-          <div className="mt-6 flex flex-col gap-3" aria-label="Chargement de la liste">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="carte p-5">
-                <Skeleton className="h-6 w-2/3" />
-                <div className="mt-3">
-                  <Skeleton className="h-4 w-1/3" />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : articles.length === 0 ? (
+        {articles.length === 0 ? (
           <div className="mt-6">
             <EmptyState
               icon={FileText}

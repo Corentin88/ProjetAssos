@@ -32,8 +32,8 @@ export async function lockAdmin(
 export function contentLog(
   tx: Prisma.TransactionClient,
   userId: string | null,
-  target: 'ARTICLE' | 'CATEGORY' | 'TAG' | 'MEDIA' | 'COMMENT' | 'ASSOCIATION' | 'CONTACT_MESSAGE',
-  targetId: string,
+  target: Prisma.ActivityLogUncheckedCreateInput['target'],
+  targetId: string | null,
   action: Prisma.ActivityLogUncheckedCreateInput['action'],
   description: string,
 ) {

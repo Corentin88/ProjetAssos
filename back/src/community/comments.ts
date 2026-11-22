@@ -35,7 +35,7 @@ import { SessionService } from '../auth/session.service.js';
 import type { Principal } from '../auth/session.service.js';
 import { contentLog } from '../content/content.shared.js';
 import { PrismaService } from '../prisma/prisma.module.js';
-import { presentAvatar, profileFields } from '../profiles/profiles.module.js';
+import { presentAvatar, profileFields } from '../profiles/profile-avatar.js';
 
 class CommentDto {
   @IsString()

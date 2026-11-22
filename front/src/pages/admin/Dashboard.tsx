@@ -1,5 +1,5 @@
 import { useCurrentUser } from '../../lib/auth'
-import { Link, useOutletContext } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import {
   ArrowRight,
   CalendarClock,
@@ -12,12 +12,8 @@ import {
   UserPlus,
   Users,
 } from 'lucide-react'
-import { db, fullName, useDb } from '../../lib/db'
-import { useFakeLoad } from '../../hooks/common'
-import { Skeleton, SkeletonText } from '../../components/ui/feedback'
-import type { AdminMessagesContext } from '../../components/layout/AdminLayout'
-import type { Comment } from '../../types'
-import { useResource } from '../../lib/community'
+import { actionLabels, journalActor, journalTarget, useAdminOverview } from '../../lib/admin'
+import { Alert } from '../../components/ui/feedback'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
 import { Badge } from '../../components/ui/feedback'
 import { ArticleStatutBadge } from '../../components/content/ArticleCard'
@@ -27,20 +23,14 @@ import { buttonClasses } from '../../components/ui/form'
 /** Tableau de bord administrateur (§37, §40) : statistiques, « À traiter »,
  *  actions rapides, articles programmés et activité récente */
 export function Dashboard() {
-  useDb()
-  const chargement = useFakeLoad(500)
   const admin = useCurrentUser()
-
-  const publies = db.articles.filter((a) => a.statut === 'publie').length
-  const programmes = db.articles.filter((a) => a.statut === 'programme').length
-  const brouillons = db.articles.filter((a) => a.statut === 'brouillon').length
-  const corbeille = db.articles.filter((a) => a.statut === 'corbeille').length
-  const { data: messages } = useOutletContext<AdminMessagesContext>()
-  const messagesNonLus = messages?.filter((m) => !m.lu).length ?? 0
-  const nbUtilisateurs = db.users.length
-  const { data: commentaires } = useResource<Comment[]>('/admin/comments', true)
-  const nbCommentaires = commentaires?.length ?? 0
-  const medias = db.medias.length
+  const { data, error } = useAdminOverview()
+  const publies = data?.articles.PUBLISHED
+  const programmes = data?.articles.SCHEDULED ?? 0
+  const corbeille = data?.articles.TRASHED ?? 0
+  const messagesNonLus = data?.unreadMessages ?? 0
+  const nbUtilisateurs = data ? data.accounts.ADMIN + data.accounts.USER : undefined
+  const nbCommentaires = data?.comments
 
   const aTraiter: { titre: string; texte: string; lien: string; lienLabel: string; urgence: boolean }[] = []
   if (messagesNonLus > 0) {
@@ -70,7 +60,7 @@ export function Dashboard() {
       urgence: false,
     })
   }
-  const suspendus = db.users.filter((u) => u.statut === 'suspendu').length
+  const suspendus = data?.suspended ?? 0
   if (suspendus > 0) {
     aTraiter.push({
       titre: `${suspendus} compte suspendu${suspendus > 1 ? 's' : ''}`,
@@ -81,11 +71,8 @@ export function Dashboard() {
     })
   }
 
-  const programmesProchains = db.articles
-    .filter((a) => a.statut === 'programme' && a.programmeAt)
-    .sort((a, b) => (a.programmeAt ?? '').localeCompare(b.programmeAt ?? ''))
-
-  const derniersLogs = db.logs.slice(0, 6)
+  const programmesProchains = data?.scheduled ?? []
+  const derniersLogs = data?.recent ?? []
 
   return (
     <>
@@ -109,14 +96,8 @@ export function Dashboard() {
 
       <div className="mx-auto max-w-6xl px-4 py-8 md:px-8">
         {/* Indicateurs clés */}
-        {chargement ? (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="Chargement des statistiques">
-            {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="rounded-2xl border border-line bg-white p-6">
-                <SkeletonText lines={2} />
-              </div>
-            ))}
-          </div>
+        {error ? <Alert kind="erreur" title="Tableau de bord indisponible">{error}</Alert> : !data ? (
+          <p role="status">Chargement du tableau de bord…</p>
         ) : (
           <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {[
@@ -146,7 +127,7 @@ export function Dashboard() {
               À traiter
             </h2>
             <ul className="mt-4 flex flex-col gap-3">
-              {aTraiter.length === 0 ? (
+              {!data ? null : aTraiter.length === 0 ? (
                 <li className="rounded-2xl border border-dashed border-line bg-white p-5 text-mist">
                   Rien à signaler : tous les éléments sont à jour.
                 </li>
@@ -213,7 +194,7 @@ export function Dashboard() {
               <CalendarClock aria-hidden="true" className="h-6 w-6" />
               Publications programmées
             </h2>
-            {programmesProchains.length === 0 ? (
+            {!data ? null : programmesProchains.length === 0 ? (
               <p className="mt-4 rounded-2xl border border-dashed border-line bg-white p-5 text-mist">
                 Aucune publication programmée.
               </p>
@@ -226,12 +207,12 @@ export function Dashboard() {
                         to={`/admin/articles/${a.id}`}
                         className="font-bold text-forest underline decoration-2 underline-offset-4 hover:bg-leaf-pale"
                       >
-                        {a.titre}
+                        {a.title}
                       </Link>
-                      <ArticleStatutBadge statut={a.statut} />
+                      <ArticleStatutBadge statut="programme" />
                     </div>
                     <p className="mt-1 text-[0.9375rem] text-mist">
-                      Publication automatique le {formatDateTime(a.programmeAt)}
+                      Publication automatique le {formatDateTime(a.scheduledAt)}
                     </p>
                   </li>
                 ))}
@@ -245,12 +226,13 @@ export function Dashboard() {
               <ScrollText aria-hidden="true" className="h-6 w-6" />
               Activité administrative récente
             </h2>
+            {data && !derniersLogs.length && <p className="mt-4 text-mist">Aucune activité enregistrée.</p>}
             <ul className="mt-4 flex flex-col gap-2">
               {derniersLogs.map((l) => (
                 <li key={l.id} className="rounded-2xl border border-line bg-white p-4">
-                  <p className="font-bold">{l.action}</p>
+                  <p className="font-bold">{actionLabels[l.action]}</p>
                   <p className="text-[0.9375rem] text-mist">
-                    {l.cible} — {fullName(db.users.find((u) => u.id === l.adminId))} —{' '}
+                    {journalTarget(l)} — {journalActor(l)} —{' '}
                     {formatDateTime(l.at)}
                   </p>
                 </li>

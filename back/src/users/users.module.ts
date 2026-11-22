@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  Get,
   HttpCode,
   Module,
   Param,
@@ -21,6 +22,7 @@ import {
   Roles,
 } from '../auth/access.guard.js';
 import {
+  AdminProfileDto,
   ChangeRoleDto,
   ChangeStatusDto,
   ConfirmDto,
@@ -33,6 +35,39 @@ import type { Principal } from '../auth/session.service.js';
 @UseGuards(AccessGuard, BrowserOriginGuard, RoleGuard, AuthRateGuard)
 class UsersController {
   constructor(private readonly accounts: AccountsService) {}
+
+  @Get()
+  @Roles('ADMIN')
+  list() {
+    return this.accounts.list();
+  }
+
+  @Get(':id')
+  @Roles('ADMIN')
+  detail(@Param('id', ParseUUIDPipe) id: string) {
+    return this.accounts.detail(id);
+  }
+
+  @Patch(':id')
+  @Roles('ADMIN')
+  edit(
+    @CurrentUser() user: Principal,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminProfileDto,
+  ) {
+    return this.accounts.edit(user, id, dto);
+  }
+
+  @Delete(':id/avatar')
+  @HttpCode(204)
+  @Roles('ADMIN')
+  avatar(
+    @CurrentUser() user: Principal,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() _confirmation: ConfirmDto,
+  ) {
+    return this.accounts.resetAvatar(user, id);
+  }
 
   @Delete('me')
   @HttpCode(204)
