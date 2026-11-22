@@ -237,7 +237,7 @@ export class AuthController {
       );
     response.redirect(
       303,
-      `${this.frontOrigin}${session ? '/connexion' : '/mon-compte/securite'}?google=ok`,
+      `${this.frontOrigin}/#${session ? '/connexion' : '/mon-compte/securite'}?google=ok`,
     );
   }
 

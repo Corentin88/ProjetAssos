@@ -1,13 +1,12 @@
+import { useCurrentUser } from '../../lib/auth'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { BellOff, CircleAlert, Info, ShieldCheck, Trash2 } from 'lucide-react'
 import {
-  db,
   deleteAllNotifications,
   deleteNotification,
   markAllNotificationsRead,
   markNotificationRead,
-  session,
   useDb,
 } from '../../lib/db'
 import { userNotifications } from '../../lib/selectors'
@@ -28,7 +27,7 @@ const ICONES = {
 export function NotificationsPage() {
   useDb()
   const { toast } = useToast()
-  const user = session.current ? db.users.find((u) => u.id === session.current!.userId) ?? null : null
+  const user = useCurrentUser()
   const notifications = user ? userNotifications(user.id) : []
   const nonLues = notifications.filter((n) => !n.lue).length
 

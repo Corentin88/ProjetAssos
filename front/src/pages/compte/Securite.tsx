@@ -1,15 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { KeyRound, Link2, ShieldCheck } from 'lucide-react'
-import {
-  associerGoogle,
-  changePassword,
-  db,
-  dissocierGoogle,
-  MOT_DE_PASSE_DEMO,
-  session,
-  useDb,
-} from '../../lib/db'
+import { authErrorMessage, changePassword, startGoogle, unlinkGoogle, useCurrentUser } from '../../lib/auth'
 import { Button, Field, Input } from '../../components/ui/form'
 import { Alert } from '../../components/ui/feedback'
 import { useToast } from '../../hooks/useToast'
@@ -17,15 +9,15 @@ import { validatePassword } from '../../hooks/common'
 
 /** Section Sécurité / connexion (§5, §6, §13) */
 export function Securite() {
-  useDb()
   const navigate = useNavigate()
   const { toast } = useToast()
-  const user = session.current ? db.users.find((u) => u.id === session.current!.userId) ?? null : null
+  const user = useCurrentUser()
 
   const [ancien, setAncien] = useState('')
   const [nouveau, setNouveau] = useState('')
   const [confirmation, setConfirmation] = useState('')
   const [erreurs, setErreurs] = useState<Record<string, string>>({})
+  const [enCours, setEnCours] = useState(false)
 
   if (!user) return null
   const aGoogle = user.authMethods.includes('google')
@@ -42,8 +34,9 @@ export function Securite() {
         <form
           className="mt-5 flex flex-col gap-5"
           noValidate
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault()
+            if (enCours || !aMotDePasse) return
             const errs: Record<string, string> = {}
             if (!ancien) errs.ancien = 'Veuillez saisir votre mot de passe actuel.'
             const errNouveau = validatePassword(nouveau)
@@ -53,13 +46,16 @@ export function Securite() {
               setErreurs(errs)
               return
             }
-            const res = changePassword(user.id, ancien, nouveau)
-            if (!res.ok) {
-              setErreurs({ ancien: res.error })
-              return
+            setEnCours(true)
+            try {
+              await changePassword(ancien, nouveau, confirmation)
+              toast('Mot de passe modifié. Toutes vos sessions ont été invalidées : reconnectez-vous.')
+              navigate('/connexion')
+            } catch (error) {
+              setErreurs({ ancien: authErrorMessage(error) })
+            } finally {
+              setEnCours(false)
             }
-            toast('Mot de passe modifié. Toutes vos sessions ont été invalidées : reconnectez-vous.')
-            navigate('/connexion')
           }}
         >
           <Field label="Mot de passe actuel" htmlFor="s-ancien" required error={erreurs.ancien}>
@@ -81,7 +77,7 @@ export function Securite() {
             htmlFor="s-nouveau"
             required
             error={erreurs.nouveau}
-            hint="8 caractères minimum, avec au moins une lettre et un chiffre."
+            hint="Entre 12 et 128 caractères."
           >
             <Input
               id="s-nouveau"
@@ -115,10 +111,7 @@ export function Securite() {
             nouveau mot de passe.
           </Alert>
           <div>
-            <Button type="submit">Modifier mon mot de passe</Button>
-            <p className="mt-3 text-[0.875rem] text-mist">
-              Maquette : le mot de passe de démonstration est « {MOT_DE_PASSE_DEMO} ».
-            </p>
+            <Button type="submit" disabled={enCours || !aMotDePasse}>Modifier mon mot de passe</Button>
           </div>
         </form>
       </section>
@@ -162,13 +155,22 @@ export function Securite() {
           <div className="mt-5">
             <Button
               variant="secondaire"
-              onClick={() => {
+              disabled={enCours}
+              onClick={async () => {
                 if (user.authMethods.length <= 1) {
                   toast('Impossible de dissocier la dernière méthode de connexion active.', 'erreur')
                   return
                 }
-                dissocierGoogle(user.id)
-                toast('Votre compte Google a été dissocié.')
+                setEnCours(true)
+                try {
+                  await unlinkGoogle()
+                  toast('Votre compte Google a été dissocié. Reconnectez-vous.')
+                  navigate('/connexion')
+                } catch (error) {
+                  toast(authErrorMessage(error), 'erreur')
+                } finally {
+                  setEnCours(false)
+                }
               }}
             >
               Dissocier mon compte Google
@@ -177,9 +179,16 @@ export function Securite() {
         ) : (
           <div className="mt-5">
             <Button
-              onClick={() => {
-                associerGoogle(user.id)
-                toast('Votre compte Google a été associé de manière explicite.')
+              disabled={enCours}
+              onClick={async () => {
+                setEnCours(true)
+                try {
+                  await startGoogle(true)
+                } catch (error) {
+                  toast(authErrorMessage(error), 'erreur')
+                } finally {
+                  setEnCours(false)
+                }
               }}
             >
               <Link2 aria-hidden="true" className="h-5 w-5" />
@@ -195,10 +204,8 @@ export function Securite() {
 
         <div className="mt-6 border-t border-line pt-5">
           <Alert kind="info" title="Sessions et sécurité">
-            La gestion technique des jetons d'accès, du renouvellement de session et de leur
-            rotation sera définie dans les spécifications techniques du backend. Une déconnexion
-            ou une invalidation de session empêche l'accès aux fonctionnalités réservées aux
-            membres.
+            Une déconnexion ou une invalidation de session empêche l'accès aux fonctionnalités
+            réservées aux membres.
           </Alert>
         </div>
       </section>

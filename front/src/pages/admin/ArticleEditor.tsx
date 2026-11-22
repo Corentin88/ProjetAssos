@@ -1,3 +1,4 @@
+import { useCurrentUser } from '../../lib/auth'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
@@ -20,7 +21,6 @@ import {
   logAction,
   programArticle,
   publishNow,
-  session,
   startEditPublished,
   trashArticle,
   updateArticle,
@@ -70,7 +70,7 @@ export function ArticleEditor() {
   /** Panneau de paramètres : replié par défaut sur mobile, toujours visible sur ordinateur */
   const [parametresOuverts, setParametresOuverts] = useState(false)
 
-  const admin = session.current ? db.users.find((u) => u.id === session.current!.userId) : null
+  const admin = useCurrentUser()
   const adminId = admin?.id ?? 'u1'
 
   // Règle §20 : ouvrir l'éditeur d'un article publié sans modifications en

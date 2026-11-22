@@ -1,3 +1,4 @@
+import { useCurrentUser } from '../../lib/auth'
 import { useMemo, useState } from 'react'
 import { Images, Import, Pencil, Search, Trash2 } from 'lucide-react'
 import type { Media } from '../../types'
@@ -9,7 +10,6 @@ import {
   logAction,
   mediaUsage,
   replaceMediaFile,
-  session,
   updateMedia,
   useDb,
   useDbVersion,
@@ -41,7 +41,7 @@ export function MediasAdmin() {
   useDb()
   const version = useDbVersion()
   const { toast } = useToast()
-  const admin = session.current ? db.users.find((u) => u.id === session.current!.userId) : null
+  const admin = useCurrentUser()
   const adminId = admin?.id ?? 'u1'
 
   const [recherche, setRecherche] = useState('')

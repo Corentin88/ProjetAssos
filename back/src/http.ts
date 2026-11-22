@@ -52,7 +52,11 @@ export function configureHttp(app: INestApplication) {
   app.setGlobalPrefix('api/v1', {
     exclude: [{ path: '/', method: RequestMethod.GET }],
   });
-  app.enableCors({ origin: config.frontOrigin, credentials: true });
+  app.enableCors({
+    origin: config.frontOrigin,
+    credentials: true,
+    exposedHeaders: ['Retry-After'],
+  });
   app.use(
     '/api/v1',
     (_request: Request, response: Response, next: NextFunction) => {

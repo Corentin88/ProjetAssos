@@ -1,7 +1,8 @@
+import { useCurrentUser } from '../../lib/auth'
 import { useMemo, useState } from 'react'
 import { CheckCheck, Mail, MailOpen, Reply, Trash2 } from 'lucide-react'
 import type { ContactMessage } from '../../types'
-import { db, deleteMessage, markMessage, replyToMessage, session, useDb, useDbVersion } from '../../lib/db'
+import { db, deleteMessage, markMessage, replyToMessage, useDb, useDbVersion } from '../../lib/db'
 import { formatDateTime } from '../../lib/format'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
 import { Avatar } from '../../components/ui/misc'
@@ -16,7 +17,7 @@ export function MessagesAdmin() {
   useDb()
   const version = useDbVersion()
   const { toast } = useToast()
-  const admin = session.current ? db.users.find((u) => u.id === session.current!.userId) : null
+  const admin = useCurrentUser()
   const adminId = admin?.id ?? 'u1'
 
   const [filtre, setFiltre] = useState<'tous' | 'non-lus' | 'lus'>('tous')

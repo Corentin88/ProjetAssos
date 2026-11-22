@@ -1,3 +1,4 @@
+import { useCurrentUser } from '../../lib/auth'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Eye, FileText, ListFilter, Pencil, RotateCcw, Search, Trash2, Undo2 } from 'lucide-react'
@@ -9,7 +10,6 @@ import {
   deleteArticleForever,
   publishNow,
   restoreArticle,
-  session,
   startEditPublished,
   trashArticle,
   unpublish,
@@ -56,7 +56,7 @@ export function ArticlesAdmin() {
   const [aRestaurer, setARestaurer] = useState<Article | null>(null)
   const [aRetirer, setARetirer] = useState<Article | null>(null)
 
-  const admin = session.current ? db.users.find((u) => u.id === session.current!.userId) : null
+  const admin = useCurrentUser()
   const adminId = admin?.id ?? 'u1'
 
   const comptes = {

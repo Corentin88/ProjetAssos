@@ -1,6 +1,7 @@
+import { useCurrentUser } from '../../lib/auth'
 import { Link, NavLink } from 'react-router-dom'
 import { Facebook, Instagram, Mail, MapPin, Phone } from 'lucide-react'
-import { currentUser, useDb } from '../../lib/db'
+import { useDb } from '../../lib/db'
 import { asset } from '../../lib/assets'
 import { LIENS_PUBLICS } from './siteNavigation'
 
@@ -15,7 +16,7 @@ function lienActif({ isActive }: { isActive: boolean }) {
 export function SiteFooter() {
   const db = useDb()
   const c = db.association.coordonnees
-  const utilisateur = currentUser()
+  const utilisateur = useCurrentUser()
 
   return (
     <footer className="focus-inverse mt-auto bg-forest-dark text-white">

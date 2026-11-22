@@ -1,10 +1,10 @@
+import { useCurrentUser } from '../../lib/auth'
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { MessageCircle, Pencil, Reply, Shield, Trash2 } from 'lucide-react'
 import type { Comment } from '../../types'
 import {
   addComment,
-  currentUser,
   deleteCommentByAuthor,
   editComment,
   useDb,
@@ -33,7 +33,7 @@ function avecMentions(texte: string): React.ReactNode {
 
 export function CommentsSection({ articleId }: { articleId: string }) {
   useDb()
-  const compte = currentUser()
+  const compte = useCurrentUser()
   const user = compte?.statut === 'actif' ? compte : null
   const threads = commentThreads(articleId)
   const nbTotal = visibleComments(articleId).length
@@ -349,7 +349,8 @@ function CommentForm({
           focusChampInvalide(e.currentTarget)
           return
         }
-        addComment(articleId, user.id, contenu, parentId)
+        const initiale = user.nom.charAt(0)
+        addComment(articleId, user.id, contenu, parentId, initiale ? `${user.prenom} ${initiale}.` : user.prenom)
         setContenu('')
         setEnvoye(true)
         setErreur('')

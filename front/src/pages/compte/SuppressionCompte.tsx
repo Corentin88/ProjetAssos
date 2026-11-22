@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { TriangleAlert } from 'lucide-react'
-import { db, deleteOwnAccount, session, useDb } from '../../lib/db'
+import { ApiError, authErrorMessage, deleteOwnAccount, useCurrentUser } from '../../lib/auth'
+import { anonymizeDemoComments } from '../../lib/db'
 import { Button, Checkbox } from '../../components/ui/form'
 import { ConfirmDialog } from '../../components/ui/overlay'
 import { Alert } from '../../components/ui/feedback'
@@ -9,16 +10,15 @@ import { useToast } from '../../hooks/useToast'
 
 /** Suppression définitive du compte (§12) */
 export function SuppressionCompte() {
-  useDb()
   const navigate = useNavigate()
   const { toast } = useToast()
-  const user = session.current ? db.users.find((u) => u.id === session.current!.userId) ?? null : null
+  const user = useCurrentUser()
   const [compris, setCompris] = useState(false)
   const [confirme, setConfirme] = useState(false)
+  const [enCours, setEnCours] = useState(false)
+  const [estDernierAdmin, setEstDernierAdmin] = useState(false)
 
   if (!user) return null
-
-  const estDernierAdmin = user.role === 'administrateur' && db.users.filter((u) => u.role === 'administrateur').length <= 1
 
   return (
     <section aria-labelledby="titre-suppression" className="mx-auto max-w-3xl">
@@ -62,7 +62,7 @@ export function SuppressionCompte() {
         <div className="mt-5">
           <Button
             variant="danger"
-            disabled={!compris || estDernierAdmin}
+            disabled={!compris || enCours || estDernierAdmin}
             onClick={() => setConfirme(true)}
           >
             <TriangleAlert aria-hidden="true" className="h-5 w-5" />
@@ -74,11 +74,24 @@ export function SuppressionCompte() {
       <ConfirmDialog
         open={confirme}
         onClose={() => setConfirme(false)}
-        onConfirm={() => {
-          deleteOwnAccount(user.id)
-          setConfirme(false)
-          toast('Votre compte a été supprimé. Vos anciens commentaires restent visibles sous la mention « Utilisateur supprimé ».', 'info')
-          navigate('/')
+        onConfirm={async () => {
+          if (enCours) return
+          setEnCours(true)
+          try {
+            await deleteOwnAccount()
+            anonymizeDemoComments(user.id)
+            toast('Votre compte a été supprimé. Vos anciens commentaires restent visibles sous la mention « Utilisateur supprimé ».', 'info')
+            navigate('/')
+          } catch (error) {
+            if (user.role === 'administrateur' && error instanceof ApiError && error.status === 409) {
+              setEstDernierAdmin(true)
+            } else {
+              toast(authErrorMessage(error), 'erreur')
+            }
+          } finally {
+            setConfirme(false)
+            setEnCours(false)
+          }
         }}
         title="Confirmer la suppression de votre compte"
         confirmLabel="Supprimer mon compte définitivement"

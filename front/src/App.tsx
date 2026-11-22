@@ -1,9 +1,11 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { useEffect } from 'react'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { ErreurBoundary } from './components/ErreurBoundary'
 import { ToastProvider } from './hooks/useToast'
 import { PublicLayout } from './components/layout/PublicLayout'
 import { AdminLayout } from './components/layout/AdminLayout'
 import { RequireAdmin, RequireAuth } from './components/layout/guards'
+import { restoreSession, revalidateSession } from './lib/auth'
 
 // Pages publiques
 import { Accueil } from './pages/public/Accueil'
@@ -37,6 +39,15 @@ import { StatistiquesAdmin } from './pages/admin/StatistiquesAdmin'
 import { JournalAdmin } from './pages/admin/JournalAdmin'
 
 export default function App() {
+  const { key } = useLocation()
+  useEffect(() => {
+    void restoreSession()
+    const refreshProfile = () => { void revalidateSession() }
+    window.addEventListener('focus', refreshProfile)
+    return () => window.removeEventListener('focus', refreshProfile)
+  }, [])
+  useEffect(() => { void revalidateSession() }, [key])
+
   return (
     <ErreurBoundary>
       <ToastProvider>

@@ -1,6 +1,7 @@
+import { useCurrentUser } from '../../lib/auth'
 import { useState } from 'react'
 import { CheckCircle2, Clock, MapPin, Pencil, Save, Users } from 'lucide-react'
-import { db, logAction, saveAssociation, session, useDb } from '../../lib/db'
+import { db, logAction, saveAssociation, useDb } from '../../lib/db'
 import { toInputDateTime } from '../../lib/format'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
 import { BlockEditor } from '../../components/admin/BlockEditor'
@@ -19,7 +20,7 @@ export function AssociationAdmin() {
   const [coords, setCoords] = useState({ ...db.association.coordonnees })
   const [erreurs, setErreurs] = useState<Record<string, string>>({})
 
-  const admin = session.current ? db.users.find((u) => u.id === session.current!.userId) : null
+  const admin = useCurrentUser()
   const adminId = admin?.id ?? 'u1'
 
   const setCoord = (champ: keyof typeof coords, val: string) => {

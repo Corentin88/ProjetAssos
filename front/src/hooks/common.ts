@@ -122,12 +122,10 @@ export function useForm<T extends Record<string, string>>(initial: T) {
   return { values, errors, submitted, set, setFieldErrors, reset }
 }
 
-/** Règle de mot de passe (maquette) : 8 caractères minimum, lettres + chiffres */
+/** Même longueur que le DTO d’authentification. */
 export function validatePassword(pwd: string): string | null {
-  if (pwd.length < 8) return 'Le mot de passe doit contenir au moins 8 caractères.'
-  if (!/[a-zA-Z]/.test(pwd) || !/[0-9]/.test(pwd)) {
-    return 'Le mot de passe doit contenir au moins une lettre et un chiffre.'
-  }
+  const longueur = Array.from(pwd).length
+  if (longueur < 12 || longueur > 128) return 'Le mot de passe doit contenir entre 12 et 128 caractères.'
   return null
 }
 

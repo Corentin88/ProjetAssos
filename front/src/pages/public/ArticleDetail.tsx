@@ -1,7 +1,8 @@
+import { useCurrentUser } from '../../lib/auth'
 import { useEffect } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { ArrowLeft, CalendarDays, Eye, MessageCircle, PencilLine, User } from 'lucide-react'
-import { currentUser, useDb } from '../../lib/db'
+import { useDb } from '../../lib/db'
 import {
   articleAuthorLabel,
   articleCoverMediaId,
@@ -65,7 +66,7 @@ export function ArticleDetail() {
   const coverId = articleCoverMediaId(article)
   const cover = getMedia(coverId)
   const auteur = db.users.find((u) => u.id === article.auteurId)
-  const sessionUser = currentUser()
+  const sessionUser = useCurrentUser()
   const compteActif = sessionUser?.statut === 'actif'
   const nbCommentaires = visibleComments(article.id).length
 

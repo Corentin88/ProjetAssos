@@ -1,3 +1,4 @@
+import { useCurrentUser } from '../../lib/auth'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
@@ -21,7 +22,6 @@ import {
   fullName,
   reactivateUser,
   resetUserAvatar,
-  session,
   suspendUser,
   updateUserByAdmin,
   useDb,
@@ -85,7 +85,7 @@ export function UtilisateursAdmin() {
   const version = useDbVersion()
   const { toast } = useToast()
   const navigate = useNavigate()
-  const admin = session.current ? db.users.find((u) => u.id === session.current!.userId) : null
+  const admin = useCurrentUser()
   const adminId = admin?.id ?? 'u1'
 
   const [recherche, setRecherche] = useState('')
@@ -340,7 +340,7 @@ export function UtilisateurDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { toast } = useToast()
-  const admin = session.current ? db.users.find((u) => u.id === session.current!.userId) : null
+  const admin = useCurrentUser()
   const adminId = admin?.id ?? 'u1'
 
   const user = id ? db.users.find((u) => u.id === id) : undefined

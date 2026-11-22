@@ -1,6 +1,7 @@
+import { useCurrentUser } from '../../lib/auth'
 import { NavLink, Outlet } from 'react-router-dom'
 import { Bell, MessageSquare, ShieldCheck, Trash2, UserCircle } from 'lucide-react'
-import { db, session, useDb } from '../../lib/db'
+import { useDb } from '../../lib/db'
 import { unreadNotificationCount } from '../../lib/selectors'
 import { RequireAuth } from '../../components/layout/guards'
 import { formatDate, formatMoisAnnee } from '../../lib/format'
@@ -18,9 +19,7 @@ const SECTIONS = [
 
 function MonCompteLayout() {
   useDb()
-  const sessionUser = session.current
-    ? db.users.find((u) => u.id === session.current!.userId) ?? null
-    : null
+  const sessionUser = useCurrentUser()
   const unread = sessionUser ? unreadNotificationCount(sessionUser.id) : 0
 
   return (

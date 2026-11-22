@@ -32,6 +32,7 @@ services:
     environment:
       # Docker Desktop ne relaie pas toujours les événements sur les fichiers Windows.
       CHOKIDAR_USEPOLLING: "true"
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:3000/api/v1}
     ports:
       - "127.0.0.1:5173:5173"
     volumes:
