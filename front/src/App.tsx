@@ -57,7 +57,7 @@ export default function App() {
     refresh()
     window.addEventListener('focus', refresh)
     return () => window.removeEventListener('focus', refresh)
-  }, [key, notificationOwner])
+  }, [key, pathname, notificationOwner])
   useEffect(() => { void loadContent('public') }, [pathname])
   useEffect(() => {
     if (user?.role !== 'administrateur' || user.statut !== 'actif') {
