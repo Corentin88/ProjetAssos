@@ -4,12 +4,15 @@ import {
   ForbiddenException,
   Injectable,
   Logger,
+  NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client.js';
 import type { AccountTokenPurpose } from '../../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { RuntimeConfig } from '../config/runtime.module.js';
 import type {
+  AdminProfileDto,
   ChangeRoleDto,
   ChangeStatusDto,
   CompletePasswordDto,
@@ -29,6 +32,49 @@ import {
   removeAvatarRecord,
 } from '../profiles/avatar-files.js';
 
+import { presentAvatar, profileFields } from '../profiles/profile-avatar.js';
+
+const operationalAdmin = {
+  role: 'ADMIN',
+  status: 'ACTIVE',
+  passwordSetupPending: false,
+} satisfies Prisma.UserWhereInput;
+const accountFields = {
+  id: true,
+  email: true,
+  role: true,
+  status: true,
+  createdAt: true,
+  lastActiveAt: true,
+  passwordHash: true,
+  googleId: true,
+  passwordSetupPending: true,
+  profile: { select: profileFields },
+} satisfies Prisma.UserSelect;
+
+function presentAccount(
+  account: Prisma.UserGetPayload<{ select: typeof accountFields }>,
+) {
+  return {
+    id: account.id,
+    email: account.email,
+    role: account.role,
+    status: account.status,
+    createdAt: account.createdAt,
+    lastActiveAt: account.lastActiveAt,
+    invitationPending: account.passwordSetupPending,
+    firstName: account.profile?.firstName ?? '',
+    lastName: account.profile?.lastName ?? '',
+    avatar: account.profile
+      ? presentAvatar(account.id, account.profile)
+      : { kind: 'DEFAULT' },
+    authMethods: [
+      ...(account.passwordHash ? ['password'] : []),
+      ...(account.googleId ? ['google'] : []),
+    ],
+  };
+}
+
 const minutes = { INVITATION: 1440, PASSWORD_RESET: 30, EMAIL_CHANGE: 60 };
 
 @Injectable()
@@ -41,6 +87,131 @@ export class AccountsService {
     private readonly mail: AccountLinksService,
     private readonly config: RuntimeConfig,
   ) {}
+
+  async list() {
+    return (
+      await this.prisma.user.findMany({
+        select: accountFields,
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+      })
+    ).map(presentAccount);
+  }
+
+  async detail(id: string) {
+    const account = await this.prisma.user.findUnique({
+      where: { id },
+      select: {
+        ...accountFields,
+        accountTokens: {
+          where: {
+            purpose: 'EMAIL_CHANGE',
+            expiresAt: { gt: new Date() },
+            consumedAt: null,
+            revokedAt: null,
+          },
+          select: { newEmail: true },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+        _count: {
+          select: {
+            comments: {
+              where: { status: 'PUBLISHED', article: { status: 'PUBLISHED' } },
+            },
+          },
+        },
+      },
+    });
+    if (!account) throw new NotFoundException();
+    const isLastAdmin =
+      account.role === 'ADMIN' &&
+      account.status === 'ACTIVE' &&
+      !account.passwordSetupPending &&
+      !(await this.prisma.user.count({
+        where: { ...operationalAdmin, id: { not: id } },
+      }));
+    return {
+      ...presentAccount(account),
+      pendingEmail: account.accountTokens[0]?.newEmail ?? null,
+      publicCommentCount: account._count.comments,
+      isLastAdmin,
+    };
+  }
+
+  async edit(actor: Principal, userId: string, dto: AdminProfileDto) {
+    const token = await this.prisma.$transaction(async (tx) => {
+      await this.authorize(tx, actor, userId, true);
+      const account = await tx.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: {
+          email: true,
+          passwordSetupPending: true,
+          profile: { select: { firstName: true, lastName: true } },
+        },
+      });
+      const names = { firstName: dto.firstName, lastName: dto.lastName };
+      if (
+        account.profile?.firstName !== names.firstName ||
+        account.profile?.lastName !== names.lastName
+      ) {
+        await tx.profile.upsert({
+          where: { userId },
+          create: { userId, ...names },
+          update: names,
+        });
+        await this.log(
+          tx,
+          actor.userId,
+          userId,
+          'UPDATE',
+          'Informations de profil modifiées.',
+        );
+      }
+      return dto.email && dto.email !== account.email
+        ? this.prepareEmailChange(tx, userId, account, dto.email, actor.userId)
+        : null;
+    });
+    if (!token || !dto.email)
+      return {
+        emailConfirmationRequested: false,
+        emailConfirmationSent: false,
+      };
+    try {
+      await this.mail.send(dto.email, 'EMAIL_CHANGE', token);
+      return { emailConfirmationRequested: true, emailConfirmationSent: true };
+    } catch (error) {
+      if (!(error instanceof ServiceUnavailableException)) throw error;
+      return { emailConfirmationRequested: true, emailConfirmationSent: false };
+    }
+  }
+
+  async resetAvatar(actor: Principal, userId: string) {
+    const path = await this.prisma.$transaction(async (tx) => {
+      await this.authorize(tx, actor, userId, true);
+      const profile = await tx.profile.findUniqueOrThrow({
+        where: { userId },
+        select: { avatarMediaId: true, avatarKind: true },
+      });
+      if (profile.avatarKind === 'DEFAULT' && !profile.avatarMediaId) return;
+      await tx.profile.update({
+        where: { userId },
+        data: {
+          avatarKind: 'DEFAULT',
+          avatarPreset: null,
+          avatarMediaId: null,
+        },
+      });
+      await this.log(
+        tx,
+        actor.userId,
+        userId,
+        'UPDATE',
+        'Avatar remplacé par l’avatar par défaut.',
+      );
+      return removeAvatarRecord(tx, profile.avatarMediaId);
+    });
+    await removeAvatarFile(this.config.avatarDirectory, path);
+  }
 
   requestReset(email: string) {
     this.mail.assertConfigured();
@@ -82,18 +253,45 @@ export class AccountsService {
     const token = await this.prisma.$transaction(async (tx) => {
       await this.authorize(tx, principal, userId, admin);
       const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
-      if (user.passwordSetupPending) throw new ConflictException();
       if (user.email === newEmail) return null;
-      if (
-        await tx.user.findUnique({
-          where: { email: newEmail },
-          select: { id: true },
-        })
-      )
-        throw new ConflictException();
-      return this.issue(tx, userId, 'EMAIL_CHANGE', newEmail);
+      return this.prepareEmailChange(
+        tx,
+        userId,
+        user,
+        newEmail,
+        admin ? principal.userId : undefined,
+      );
     });
     if (token) await this.mail.send(newEmail, 'EMAIL_CHANGE', token);
+  }
+
+  private async prepareEmailChange(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    account: { passwordSetupPending: boolean },
+    newEmail: string,
+    adminId?: string,
+  ) {
+    this.mail.assertConfigured();
+    if (
+      account.passwordSetupPending ||
+      (await tx.user.findUnique({
+        where: { email: newEmail },
+        select: { id: true },
+      }))
+    ) {
+      throw new ConflictException();
+    }
+    const token = await this.issue(tx, userId, 'EMAIL_CHANGE', newEmail);
+    if (adminId)
+      await this.log(
+        tx,
+        adminId,
+        userId,
+        'UPDATE',
+        'Confirmation d’un changement d’adresse demandée.',
+      );
+    return token;
   }
 
   async confirmEmail(token: string) {
@@ -170,6 +368,14 @@ export class AccountsService {
           select: { id: true },
         });
         if (!pending) throw new ConflictException();
+        if (principal)
+          await this.log(
+            tx,
+            principal.userId,
+            pending.id,
+            'UPDATE',
+            'Lien d’invitation renouvelé.',
+          );
         return {
           userId: pending.id,
           token: await this.issue(tx, pending.id, 'INVITATION'),
@@ -213,6 +419,13 @@ export class AccountsService {
       if (!user.passwordSetupPending || user.status !== 'ACTIVE') {
         throw new ConflictException();
       }
+      await this.log(
+        tx,
+        principal.userId,
+        userId,
+        'UPDATE',
+        'Lien d’invitation renouvelé.',
+      );
       return {
         email: user.email,
         token: await this.issue(tx, userId, 'INVITATION'),
@@ -227,6 +440,7 @@ export class AccountsService {
     { status }: ChangeStatusDto,
   ) {
     await this.prisma.$transaction(async (tx) => {
+      await this.serializeAdminChanges(tx);
       await this.authorize(tx, actor, userId, true);
       const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
       if (user.status === status) return;
@@ -252,6 +466,7 @@ export class AccountsService {
     { currentRole, role }: ChangeRoleDto,
   ) {
     await this.prisma.$transaction(async (tx) => {
+      await this.serializeAdminChanges(tx);
       await this.authorize(tx, actor, userId, true);
       const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
       if (user.role !== currentRole) throw new ConflictException();
@@ -271,6 +486,7 @@ export class AccountsService {
 
   async delete(actor: Principal, userId: string, admin = false) {
     const avatarPath = await this.prisma.$transaction(async (tx) => {
+      await this.serializeAdminChanges(tx);
       await this.authorize(tx, actor, userId, admin);
       const user = await tx.user.findUniqueOrThrow({
         where: { id: userId },
@@ -380,6 +596,11 @@ export class AccountsService {
     if (admin && actor.role !== 'ADMIN') throw new ForbiddenException();
   }
 
+  private async serializeAdminChanges(tx: Prisma.TransactionClient) {
+    // Deux administrateurs peuvent agir sur leur propre compte au même moment.
+    await tx.$queryRaw`SELECT 1 AS locked FROM pg_advisory_xact_lock(8476102)`;
+  }
+
   private async protectLastAdmin(
     tx: Prisma.TransactionClient,
     user: {
@@ -397,10 +618,8 @@ export class AccountsService {
       return;
     const replacement = await tx.user.findFirst({
       where: {
+        ...operationalAdmin,
         id: { not: user.id },
-        role: 'ADMIN',
-        status: 'ACTIVE',
-        passwordSetupPending: false,
       },
       select: { id: true },
     });
@@ -421,7 +640,7 @@ export class AccountsService {
     tx: Prisma.TransactionClient,
     userId: string,
     targetId: string | null,
-    action: 'CREATE' | 'DELETE' | 'SUSPEND' | 'REACTIVATE' | 'CHANGE_ROLE',
+    action: Prisma.ActivityLogUncheckedCreateInput['action'],
     description: string,
   ) {
     return tx.activityLog.create({

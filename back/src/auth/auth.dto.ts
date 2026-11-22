@@ -44,6 +44,16 @@ export class NamesDto {
   lastName: string;
 }
 
+export class AdminProfileDto extends NamesDto {
+  @ValidateIf((_input, value) => value !== undefined)
+  @Transform(({ value }) =>
+    typeof value === 'string' ? normalizeEmail(value) : value,
+  )
+  @IsEmail()
+  @MaxLength(254)
+  email?: string;
+}
+
 export class LoginDto extends EmailDto {
   @IsString()
   @Length(1, 128)

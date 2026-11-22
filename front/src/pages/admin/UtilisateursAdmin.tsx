@@ -1,5 +1,5 @@
-import { useCurrentUser } from '../../lib/auth'
-import { useMemo, useState } from 'react'
+import { protectedRequest, revalidateSession, useCurrentUser } from '../../lib/auth'
+import { useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -12,23 +12,12 @@ import {
   UserPlus,
   Users,
 } from 'lucide-react'
-import type { Role, User } from '../../types'
-import {
-  adminCount,
-  changeRole,
-  createUser,
-  db,
-  deleteUserByAdmin,
-  fullName,
-  reactivateUser,
-  resetUserAvatar,
-  suspendUser,
-  updateUserByAdmin,
-  useDb,
-  useDbVersion,
-} from '../../lib/db'
-import { userPublicCommentCount } from '../../lib/selectors'
-import { formatDate, formatDateTime } from '../../lib/format'
+import type { Role } from '../../types'
+import type { AdminAccount } from '../../lib/admin'
+import { accountDisplay, adminError } from '../../lib/admin'
+import { useResource } from '../../lib/community'
+import { fullName } from '../../lib/db'
+import { formatDate } from '../../lib/format'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
 import { Avatar } from '../../components/ui/misc'
 import { Badge, EmptyState } from '../../components/ui/feedback'
@@ -36,6 +25,9 @@ import { Button, Field, Input, Select } from '../../components/ui/form'
 import { ConfirmDialog, Modal } from '../../components/ui/overlay'
 import { Alert } from '../../components/ui/feedback'
 import { useToast } from '../../hooks/useToast'
+
+type Compte = ReturnType<typeof accountDisplay>
+const apiRole = (role: Role) => role === 'administrateur' ? 'ADMIN' : 'USER'
 
 type FiltreStatut = '' | 'actif' | 'suspendu'
 type FiltreRole = '' | 'utilisateur' | 'administrateur'
@@ -45,7 +37,7 @@ const ROLE_LABELS: Record<Role, string> = {
   administrateur: 'Administrateur',
 }
 
-function MethodeBadge({ user }: { user: User }) {
+function MethodeBadge({ user }: { user: Compte }) {
   return (
     <span className="flex flex-wrap justify-center gap-1.5">
       {user.authMethods.includes('motdepasse') ? (
@@ -54,7 +46,7 @@ function MethodeBadge({ user }: { user: User }) {
       {user.authMethods.includes('google') ? (
         <Badge variant="gris">Google</Badge>
       ) : null}
-      {user.authMethods.length === 0 ? (
+      {user.invitationPending ? (
         // §3.1 : compte créé par un administrateur — l'utilisateur n'a pas
         // encore défini son mot de passe via le lien d'invitation
         <Badge variant="ocre">Invitation en attente — mot de passe non défini</Badge>
@@ -63,7 +55,7 @@ function MethodeBadge({ user }: { user: User }) {
   )
 }
 
-function RoleBadge({ user }: { user: User }) {
+function RoleBadge({ user }: { user: Compte }) {
   return user.role === 'administrateur' ? (
     <Badge variant="vert">Administrateur</Badge>
   ) : (
@@ -71,7 +63,7 @@ function RoleBadge({ user }: { user: User }) {
   )
 }
 
-function StatutBadge({ user }: { user: User }) {
+function StatutBadge({ user }: { user: Compte }) {
   return user.statut === 'actif' ? (
     <Badge variant="vert">Actif</Badge>
   ) : (
@@ -81,12 +73,9 @@ function StatutBadge({ user }: { user: User }) {
 
 /** Gestion des utilisateurs (§38) : liste, filtres, création, détail */
 export function UtilisateursAdmin() {
-  useDb()
-  const version = useDbVersion()
+  const { data, error, refresh } = useResource<AdminAccount[]>('/users', true)
   const { toast } = useToast()
-  const navigate = useNavigate()
-  const admin = useCurrentUser()
-  const adminId = admin?.id ?? 'u1'
+  const [envoi, setEnvoi] = useState(false)
 
   const [recherche, setRecherche] = useState('')
   const [filtreRole, setFiltreRole] = useState<FiltreRole>('')
@@ -96,7 +85,7 @@ export function UtilisateursAdmin() {
   const [erreurs, setErreurs] = useState<Record<string, string>>({})
 
   const utilisateurs = useMemo(() => {
-    let list = [...db.users]
+    let list = (data ?? []).map(accountDisplay)
     const q = recherche.trim().toLowerCase()
     if (q) {
       list = list.filter(
@@ -108,9 +97,9 @@ export function UtilisateursAdmin() {
     if (filtreRole) list = list.filter((u) => u.role === filtreRole)
     if (filtreStatut) list = list.filter((u) => u.statut === filtreStatut)
     return list.sort((a, b) => `${a.nom}`.localeCompare(`${b.nom}`, 'fr'))
-  }, [version, recherche, filtreRole, filtreStatut])
+  }, [data, recherche, filtreRole, filtreStatut])
 
-  const soumettreCreation = (e: React.FormEvent) => {
+  const soumettreCreation = async (e: React.FormEvent) => {
     e.preventDefault()
     const errs: Record<string, string> = {}
     if (!nouveau.prenom.trim()) errs.prenom = 'Le prénom est obligatoire.'
@@ -122,11 +111,13 @@ export function UtilisateursAdmin() {
       setErreurs(errs)
       return
     }
-    const res = createUser(adminId, nouveau)
-    if (!res.ok) {
-      setErreurs({ email: res.error })
-      return
-    }
+    if (envoi) return
+    setEnvoi(true)
+    try {
+      await protectedRequest('/users/invitations', 'POST', { firstName: nouveau.prenom, lastName: nouveau.nom, email: nouveau.email.trim(), role: apiRole(nouveau.role) })
+      await refresh()
+    } catch (error) { setErreurs({ serveur: adminError(error) }); return }
+    finally { setEnvoi(false) }
     setCreationOuverte(false)
     setNouveau({ prenom: '', nom: '', email: '', role: 'utilisateur' })
     toast(
@@ -184,10 +175,12 @@ export function UtilisateursAdmin() {
 
         <p className="mt-4 text-mist" role="status">
           {utilisateurs.length} utilisateur{utilisateurs.length > 1 ? 's' : ''} affiché
-          {utilisateurs.length > 1 ? 's' : ''} sur {db.users.length}
+          {utilisateurs.length > 1 ? 's' : ''} sur {data?.length ?? '—'}
         </p>
 
-        {utilisateurs.length === 0 ? (
+        {error ? <Alert kind="erreur" title="Comptes indisponibles">{error}</Alert>
+          : !data ? <p role="status">Chargement des comptes…</p>
+          : utilisateurs.length === 0 ? (
           <div className="mt-4">
             <EmptyState icon={Users} title="Aucun utilisateur trouvé" description="Aucun compte ne correspond aux filtres actuels." />
           </div>
@@ -292,13 +285,14 @@ export function UtilisateursAdmin() {
             <Button variant="blanc" onClick={() => setCreationOuverte(false)}>
               Annuler
             </Button>
-            <Button onClick={soumettreCreation}>
+            <Button onClick={soumettreCreation} disabled={envoi}>
               Créer le compte
             </Button>
           </>
         }
       >
         <form className="flex flex-col gap-4" onSubmit={soumettreCreation} noValidate>
+          {erreurs.serveur && <Alert kind="erreur" title="Invitation impossible">{erreurs.serveur}</Alert>}
           <Alert kind="info" title="Mot de passe">
             <p>
               L'administrateur ne définit jamais le mot de passe : l'utilisateur recevra un courriel
@@ -336,15 +330,16 @@ export function UtilisateursAdmin() {
 /** Fiche utilisateur : modification, rôle (confirmation explicite §11),
  *  suspension, réactivation, suppression, avatar (§10, §11, §12, §13.2) */
 export function UtilisateurDetail() {
-  useDb()
   const { id } = useParams()
   const navigate = useNavigate()
   const { toast } = useToast()
   const admin = useCurrentUser()
-  const adminId = admin?.id ?? 'u1'
-
-  const user = id ? db.users.find((u) => u.id === id) : undefined
-  const [aEditer, setAEditer] = useState<User | null>(null)
+  const path = id ? `/users/${id}` : undefined
+  const { data, error, refresh } = useResource<AdminAccount>(path, true)
+  const user = data ? accountDisplay(data) : undefined
+  const actionEnCours = useRef(false)
+  const [envoi, setEnvoi] = useState(false)
+  const [aEditer, setAEditer] = useState<Compte | null>(null)
   const [edition, setEdition] = useState({ prenom: '', nom: '', email: '' })
   const [erreurEdition, setErreurEdition] = useState('')
   const [roleCible, setRoleCible] = useState<Role | null>(null)
@@ -353,11 +348,13 @@ export function UtilisateurDetail() {
   const [aSupprimer, setASupprimer] = useState(false)
   const [aAvatar, setAAvatar] = useState(false)
 
-  if (!user) {
+  if (!data && !error && path) return <p className="mx-auto max-w-3xl px-4 py-16" role="status">Chargement du compte…</p>
+
+  if (!user || !path) {
     return (
       <div className="mx-auto max-w-3xl px-4 py-16">
-        <Alert kind="erreur" title="Utilisateur introuvable">
-          <p>Ce compte n'existe pas (ou plus).</p>
+        <Alert kind="erreur" title="Fiche utilisateur indisponible">
+          <p>{error ?? 'Ce compte n’existe pas.'}</p>
         </Alert>
         <p className="mt-4">
           <Link to="/admin/utilisateurs" className="inline-flex min-h-[48px] items-center rounded-xl bg-forest px-6 font-bold text-white">
@@ -368,7 +365,19 @@ export function UtilisateurDetail() {
     )
   }
 
-  const estDernierAdmin = user.role === 'administrateur' && adminCount() <= 1
+  const estDernierAdmin = Boolean(user.isLastAdmin)
+  const modifier = async (operation: () => Promise<unknown>, done: () => void, afficherErreur = (message: string) => toast(message, 'erreur'), shouldRefresh = true) => {
+    if (actionEnCours.current) return
+    actionEnCours.current = true
+    setEnvoi(true)
+    try {
+      await operation()
+      done()
+      if (admin?.id === user.id) await revalidateSession()
+      if (shouldRefresh) await refresh()
+    } catch (error) { afficherErreur(adminError(error)) }
+    finally { actionEnCours.current = false; setEnvoi(false) }
+  }
 
   return (
     <>
@@ -395,7 +404,7 @@ export function UtilisateurDetail() {
             <dl className="mt-2 w-full text-left text-[0.9375rem]">
               <div className="flex justify-between gap-3 rounded-lg bg-sand p-2">
                 <dt className="font-bold">Commentaires publics</dt>
-                <dd>{userPublicCommentCount(user.id)}</dd>
+                <dd>{user.publicCommentCount ?? 0}</dd>
               </div>
               <div className="mt-2 flex justify-between gap-3 rounded-lg bg-sand p-2">
                 <dt className="font-bold">Nouveau e-mail en attente</dt>
@@ -430,7 +439,7 @@ export function UtilisateurDetail() {
                   variant="secondaire"
                   className="w-full"
                   onClick={() => setRoleCible(user.role === 'administrateur' ? 'utilisateur' : 'administrateur')}
-                  disabled={user.role === 'administrateur' && adminCount() <= 1}
+                  disabled={estDernierAdmin}
                 >
                   <ShieldCheck aria-hidden="true" className="h-5 w-5" />
                   {user.role === 'administrateur' ? 'Rétrograder en utilisateur' : 'Promouvoir administrateur'}
@@ -438,7 +447,7 @@ export function UtilisateurDetail() {
               </li>
               {user.statut === 'actif' ? (
                 <li>
-                  <Button variant="secondaire" className="w-full" onClick={() => setASuspendre(true)}>
+                  <Button variant="secondaire" className="w-full" onClick={() => setASuspendre(true)} disabled={estDernierAdmin}>
                     <Ban aria-hidden="true" className="h-5 w-5" />
                     Suspendre le compte
                   </Button>
@@ -468,7 +477,7 @@ export function UtilisateurDetail() {
                 <Alert kind="attention" title="Dernier administrateur">
                   <p>
                     Ce compte est le dernier compte administrateur : il ne peut pas être supprimé
-                    ni rétrogradé, afin de garantir qu'il existe toujours au moins un
+                    ni rétrogradé ni suspendu, afin de garantir qu'il existe toujours au moins un
                     administrateur.
                   </p>
                 </Alert>
@@ -501,6 +510,7 @@ export function UtilisateurDetail() {
               Annuler
             </Button>
             <Button
+              disabled={envoi}
               onClick={() => {
                 if (!aEditer) return
                 if (!edition.prenom.trim() || !edition.nom.trim() || !edition.email.trim()) {
@@ -511,13 +521,20 @@ export function UtilisateurDetail() {
                   setErreurEdition("Le format de l'adresse e-mail n'est pas valide.")
                   return
                 }
-                updateUserByAdmin(adminId, aEditer.id, {
-                  prenom: edition.prenom.trim(),
-                  nom: edition.nom.trim(),
-                  email: edition.email.trim(),
-                })
-                toast('Fiche utilisateur modifiée. Une validation de la nouvelle adresse sera demandée en production (§8).')
-                setAEditer(null)
+                let confirmation = { emailConfirmationRequested: false, emailConfirmationSent: false }
+                void modifier(async () => {
+                  confirmation = await protectedRequest<typeof confirmation>(path, 'PATCH', {
+                    firstName: edition.prenom, lastName: edition.nom,
+                    email: edition.email.trim().toLowerCase() === aEditer.email ? undefined : edition.email.trim(),
+                  })
+                }, () => {
+                  setAEditer(null)
+                  if (confirmation.emailConfirmationRequested && !confirmation.emailConfirmationSent) {
+                    toast('Fiche enregistrée. Le courriel de confirmation n’a pas été envoyé. Réessayez depuis la fiche.', 'erreur')
+                  } else {
+                    toast(confirmation.emailConfirmationSent ? 'Fiche enregistrée. Un lien de confirmation a été envoyé à la nouvelle adresse.' : 'Fiche enregistrée.')
+                  }
+                }, setErreurEdition)
               }}
             >
               Enregistrer
@@ -543,7 +560,7 @@ export function UtilisateurDetail() {
             required
             hint="La nouvelle adresse devra être validée par un courriel avant de devenir l'adresse principale (§8)."
           >
-            <Input id="ed-email" type="email" value={edition.email} onChange={(e) => setEdition({ ...edition, email: e.target.value })} />
+            <Input id="ed-email" type="email" disabled={user.invitationPending} value={edition.email} onChange={(e) => setEdition({ ...edition, email: e.target.value })} />
           </Field>
         </div>
       </Modal>
@@ -553,15 +570,11 @@ export function UtilisateurDetail() {
         open={!!roleCible}
         onClose={() => setRoleCible(null)}
         onConfirm={() => {
-          if (user && roleCible) {
-            const res = changeRole(adminId, user.id, roleCible)
-            if (!res.ok) {
-              toast(res.error, 'erreur')
-            } else {
-              toast(`Rôle modifié : ${fullName(user)} est désormais ${ROLE_LABELS[roleCible]}. L'utilisateur est notifié.`)
-            }
-          }
-          setRoleCible(null)
+          if (!roleCible) return
+          return modifier(() => protectedRequest(`${path}/role`, 'PATCH', { currentRole: apiRole(user.role), role: apiRole(roleCible), confirmed: true }), () => {
+            setRoleCible(null)
+            toast('Rôle modifié. Une notification est disponible dans le compte.')
+          })
         }}
         title="Confirmer le changement de rôle"
         confirmLabel="Confirmer le changement de rôle"
@@ -584,13 +597,10 @@ export function UtilisateurDetail() {
       <ConfirmDialog
         open={aSuspendre}
         onClose={() => setASuspendre(false)}
-        onConfirm={() => {
-          if (user) {
-            suspendUser(adminId, user.id)
-            toast(`Compte de ${fullName(user)} suspendu : sessions invalidées, connexion et commentaires désactivés.`)
-          }
+        onConfirm={() => modifier(() => protectedRequest(`${path}/status`, 'PATCH', { status: 'SUSPENDED' }), () => {
           setASuspendre(false)
-        }}
+          toast('Compte suspendu. Les sessions ont été invalidées.')
+        })}
         title="Suspendre ce compte ?"
         confirmLabel="Suspendre le compte"
       >
@@ -606,13 +616,10 @@ export function UtilisateurDetail() {
       <ConfirmDialog
         open={aReactiver}
         onClose={() => setAReactiver(false)}
-        onConfirm={() => {
-          if (user) {
-            reactivateUser(adminId, user.id)
-            toast(`Compte de ${fullName(user)} réactivé : l'utilisateur peut de nouveau se connecter.`)
-          }
+        onConfirm={() => modifier(() => protectedRequest(`${path}/status`, 'PATCH', { status: 'ACTIVE' }), () => {
           setAReactiver(false)
-        }}
+          toast('Compte réactivé.')
+        })}
         title="Réactiver ce compte ?"
         confirmLabel="Réactiver le compte"
         destructive={false}
@@ -627,18 +634,11 @@ export function UtilisateurDetail() {
       <ConfirmDialog
         open={aSupprimer}
         onClose={() => setASupprimer(false)}
-        onConfirm={() => {
-          if (user) {
-            const res = deleteUserByAdmin(adminId, user.id)
-            if (!res.ok) {
-              toast(res.error, 'erreur')
-              setASupprimer(false)
-              return
-            }
-            toast(`Compte de ${fullName(user)} supprimé définitivement. Ses commentaires restent visibles avec la mention « Utilisateur supprimé ».`)
-            navigate('/admin/utilisateurs')
-          }
-        }}
+        onConfirm={() => modifier(() => protectedRequest(path, 'DELETE', { confirmed: true }), () => {
+          setASupprimer(false)
+          toast('Compte supprimé. Ses commentaires sont conservés avec un auteur anonymisé.')
+          navigate('/admin/utilisateurs')
+        }, undefined, false)}
         title="Supprimer définitivement ce compte ?"
         confirmLabel="Supprimer définitivement"
       >
@@ -655,13 +655,10 @@ export function UtilisateurDetail() {
       <ConfirmDialog
         open={aAvatar}
         onClose={() => setAAvatar(false)}
-        onConfirm={() => {
-          if (user) {
-            resetUserAvatar(adminId, user.id)
-            toast('Avatar remplacé par l\'avatar par défaut du site.')
-          }
+        onConfirm={() => modifier(() => protectedRequest(`${path}/avatar`, 'DELETE', { confirmed: true }), () => {
           setAAvatar(false)
-        }}
+          toast('Avatar par défaut rétabli.')
+        })}
         title="Réinitialiser l'avatar ?"
         confirmLabel="Remplacer par l'avatar par défaut"
         destructive={false}

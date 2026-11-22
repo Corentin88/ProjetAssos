@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { SkipLink } from '../ui/nav'
 import { CommandesAffichage, useAffichage } from './Affichage'
@@ -12,7 +12,6 @@ import {
   MessageSquare,
   MessagesSquare,
   Menu,
-  RefreshCw,
   ScrollText,
   Tags,
   Users,
@@ -20,12 +19,11 @@ import {
 } from 'lucide-react'
 import type { ContactMessage } from '../../types'
 import { useResource } from '../../lib/community'
-import { db, resetDemoData, useDb } from '../../lib/db'
+import { db, useDb } from '../../lib/db'
 import { authErrorMessage, logout, useCurrentUser } from '../../lib/auth'
 import { asset } from '../../lib/assets'
 import { Avatar } from '../ui/misc'
 import { fullName } from '../../lib/db'
-import { ConfirmDialog } from '../ui/overlay'
 import { useToast } from '../../hooks/useToast'
 
 const FAVICON = asset('favicon.svg')
@@ -142,10 +140,18 @@ export function AdminLayout() {
   const { toast } = useToast()
   const drawer = useRef<HTMLDialogElement>(null)
   const { navigationCompacte } = useAffichage()
-  const [resetOuvert, setResetOuvert] = useState(false)
   const sessionUser = useCurrentUser()
   const messages = useResource<ContactMessage[]>(sessionUser?.role === 'administrateur' && sessionUser.statut === 'actif' ? '/admin/contact' : undefined, true)
   const messagesNonLus = messages.data?.filter(m => !m.lu).length ?? 0
+  const refreshMessages = messages.refresh
+  useEffect(() => {
+    const refresh = () => { void refreshMessages() }
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [refreshMessages])
+  useEffect(() => {
+    if (pathname === '/admin/messages') void refreshMessages()
+  }, [pathname, refreshMessages])
 
   // Focus du contenu principal à chaque navigation interne
   useEffect(() => {
@@ -164,13 +170,6 @@ export function AdminLayout() {
     } catch (error) {
       toast(authErrorMessage(error), 'erreur')
     }
-  }
-
-  const onReset = () => {
-    resetDemoData()
-    setResetOuvert(false)
-    toast('Données de démonstration réinitialisées.', 'info')
-    navigate('/admin')
   }
 
   return (
@@ -241,14 +240,6 @@ export function AdminLayout() {
             </Link>
             <button
               type="button"
-              onClick={() => setResetOuvert(true)}
-              className="flex w-full items-center gap-3 rounded-xl px-4 py-3 font-bold text-white/85 hover:bg-white/10 hover:text-white"
-            >
-              <RefreshCw aria-hidden="true" className="h-5 w-5" />
-              Réinitialiser les données
-            </button>
-            <button
-              type="button"
               onClick={onDeconnexion}
               className="flex w-full items-center gap-3 rounded-xl px-4 py-3 font-bold text-white/85 hover:bg-white/10 hover:text-white"
             >
@@ -292,17 +283,6 @@ export function AdminLayout() {
                 type="button"
                 onClick={() => {
                   closeDrawer()
-                  setResetOuvert(true)
-                }}
-                className="flex w-full items-center gap-3 rounded-xl px-4 py-3 font-bold text-white/85 hover:bg-white/10 hover:text-white"
-              >
-                <RefreshCw aria-hidden="true" className="h-5 w-5" />
-                Réinitialiser les données
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  closeDrawer()
                   onDeconnexion()
                 }}
                 className="flex w-full items-center gap-3 rounded-xl px-4 py-3 font-bold text-white/85 hover:bg-white/10 hover:text-white"
@@ -320,19 +300,6 @@ export function AdminLayout() {
         </main>
       </div>
 
-      {/* Réinitialisation des données de démonstration (brief §10) */}
-      <ConfirmDialog
-        open={resetOuvert}
-        onClose={() => setResetOuvert(false)}
-        onConfirm={onReset}
-        title="Réinitialiser les données de démonstration ?"
-        confirmLabel="Réinitialiser les données"
-      >
-        <p>
-          Les modifications des modules de démonstration seront <strong>définitivement perdues</strong>. Les données de
-          démonstration d'origine seront rétablies. Votre session reste ouverte.
-        </p>
-      </ConfirmDialog>
     </div>
   )
 }

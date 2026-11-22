@@ -1,67 +1,66 @@
-import { useCurrentUser } from '../../lib/auth'
-import { useMemo, useState } from 'react'
+import { useDeferredValue, useState } from 'react'
+import { protectedRequest } from '../../lib/auth'
+import { actionLabels, targetLabels, journalActor, journalTarget, adminError } from '../../lib/admin'
+import type { JournalEntry, JournalResult } from '../../lib/admin'
+import { useResource } from '../../lib/community'
 import { ScrollText, Trash2 } from 'lucide-react'
-import type { LogActionType } from '../../types'
-import { db, deleteLogEntry, fullName, useDb, useDbVersion } from '../../lib/db'
 import { formatDateTime } from '../../lib/format'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
-import { Badge, EmptyState } from '../../components/ui/feedback'
+import { Alert, Badge, EmptyState } from '../../components/ui/feedback'
 import { Button, Field, Input, Select } from '../../components/ui/form'
 import { ConfirmDialog } from '../../components/ui/overlay'
 import { useToast } from '../../hooks/useToast'
 
-const TYPES: { id: LogActionType | ''; label: string }[] = [
-  { id: '', label: 'Tous les types' },
-  { id: 'compte', label: 'Comptes' },
-  { id: 'article', label: 'Articles' },
-  { id: 'categorie', label: 'Catégories' },
-  { id: 'tag', label: 'Tags' },
-  { id: 'commentaire', label: 'Commentaires' },
-  { id: 'media', label: 'Médias' },
-  { id: 'association', label: "Page « L'association »" },
-  { id: 'message', label: 'Messages de contact' },
-  { id: 'journal', label: 'Journal' },
-]
+const VARIANTS = {
+  ACCOUNT: 'vert', ARTICLE: 'bleu-vert', CATEGORY: 'gris', TAG: 'gris', COMMENT: 'ocre',
+  MEDIA: 'gris', ASSOCIATION: 'gris', CONTACT_MESSAGE: 'gris', ACTIVITY_LOG: 'rouge',
+} as const
 
-const VARIANTS: Record<LogActionType, 'vert' | 'ocre' | 'gris' | 'rouge' | 'bleu-vert'> = {
-  compte: 'vert',
-  article: 'bleu-vert',
-  categorie: 'gris',
-  tag: 'gris',
-  commentaire: 'ocre',
-  media: 'gris',
-  association: 'gris',
-  message: 'gris',
-  journal: 'rouge',
+function borneLocale(value: string, lendemain = false) {
+  const date = new Date(`${value}T00:00:00`)
+  if (lendemain) date.setDate(date.getDate() + 1)
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined
 }
 
 /** Journal d'activité administrateur (§41) : conservation indéfinie,
  *  filtres, suppression manuelle (elle-même inscrite au journal) */
 export function JournalAdmin() {
-  useDb()
-  const version = useDbVersion()
   const { toast } = useToast()
-  const admin = useCurrentUser()
-  const adminId = admin?.id ?? 'u1'
-
-  const [filtreAdmin, setFiltreAdmin] = useState('')
-  const [filtreType, setFiltreType] = useState<LogActionType | ''>('')
-  const [dateDebut, setDateDebut] = useState('')
-  const [dateFin, setDateFin] = useState('')
-  const [cible, setCible] = useState('')
-  const [aSupprimer, setASupprimer] = useState<string | null>(null)
-
-  const entrees = useMemo(() => {
-    let list = [...db.logs]
-    if (filtreAdmin) list = list.filter((l) => l.adminId === filtreAdmin)
-    if (filtreType) list = list.filter((l) => l.type === filtreType)
-    if (dateDebut) list = list.filter((l) => l.at >= new Date(dateDebut).toISOString())
-    if (dateFin)
-      list = list.filter((l) => l.at <= new Date(`${dateFin}T23:59:59`).toISOString())
-    const q = cible.trim().toLowerCase()
-    if (q) list = list.filter((l) => l.cible.toLowerCase().includes(q) || l.action.toLowerCase().includes(q))
-    return list
-  }, [version, filtreAdmin, filtreType, dateDebut, dateFin, cible])
+  const [filtres, setFiltres] = useState({ actor: '', action: '', target: '', from: '', before: '', element: '', page: 1 })
+  const element = useDeferredValue(filtres.element)
+  const [aSupprimer, setASupprimer] = useState<JournalEntry | null>(null)
+  const [suppressionEnCours, setSuppressionEnCours] = useState(false)
+  const [erreurSuppression, setErreurSuppression] = useState('')
+  const from = filtres.from ? borneLocale(filtres.from) : undefined
+  const before = filtres.before ? borneLocale(filtres.before, true) : undefined
+  const datesInvalides = Boolean((filtres.from && !from) || (filtres.before && !before) || (from && before && from >= before))
+  const params = new URLSearchParams({ page: String(filtres.page) })
+  for (const field of ['actor', 'action', 'target'] as const) {
+    if (filtres[field]) params.set(field, filtres[field])
+  }
+  if (element.trim()) params.set('element', element.trim())
+  if (from) params.set('from', from)
+  if (before) params.set('before', before)
+  const { data, error, refresh } = useResource<JournalResult>(datesInvalides ? undefined : `/admin/journal?${params}`, true)
+  const changerFiltre = (key: Exclude<keyof typeof filtres, 'page'>, value: string) => {
+    setFiltres(previous => ({ ...previous, [key]: value, page: 1 }))
+  }
+  const supprimer = async () => {
+    if (!aSupprimer || suppressionEnCours) return
+    setSuppressionEnCours(true)
+    setErreurSuppression('')
+    try {
+      await protectedRequest(`/admin/journal/${aSupprimer.id}`, 'DELETE', { confirmed: true })
+      setASupprimer(null)
+      if (filtres.page > 1 && data?.entries.length === 1) {
+        setFiltres(previous => ({ ...previous, page: previous.page - 1 }))
+      } else {
+        await refresh()
+      }
+      toast('Entrée supprimée. La suppression est inscrite au journal.', 'info')
+    } catch (error) { setErreurSuppression(adminError(error)) }
+    finally { setSuppressionEnCours(false) }
+  }
 
   return (
     <>
@@ -74,52 +73,54 @@ export function JournalAdmin() {
           <Field label="Administrateur" htmlFor="j-admin">
             <select
               id="j-admin"
-              value={filtreAdmin}
-              onChange={(e) => setFiltreAdmin(e.target.value)}
+              value={filtres.actor}
+              onChange={(e) => changerFiltre('actor', e.target.value)}
               className="min-h-[48px] w-full rounded-xl border border-line bg-white px-4 text-[1.0625rem]"
             >
               <option value="">Tous</option>
-              {[...new Set(db.logs.map((l) => l.adminId))].map((aid) => {
-                const u = db.users.find((x) => x.id === aid)
-                return (
-                  <option key={aid} value={aid}>
-                    {u ? fullName(u) : 'Administrateur inconnu'}
-                  </option>
-                )
-              })}
+              <option value="none">Action automatique ou compte supprimé</option>
+              {filtres.actor && filtres.actor !== 'none' && !data?.actors.some(actor => actor.id === filtres.actor) &&
+                <option value={filtres.actor}>Compte sélectionné</option>}
+              {data?.actors.map(actor => <option key={actor.id} value={actor.id}>{actor.label}</option>)}
             </select>
           </Field>
           <Field label="Type d'action" htmlFor="j-type">
             <select
               id="j-type"
-              value={filtreType}
-              onChange={(e) => setFiltreType(e.target.value as LogActionType | '')}
+              value={filtres.action}
+              onChange={(e) => changerFiltre('action', e.target.value)}
               className="min-h-[48px] w-full rounded-xl border border-line bg-white px-4 text-[1.0625rem]"
             >
-              {TYPES.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.label}
-                </option>
-              ))}
+              <option value="">Toutes les actions</option>
+              {Object.entries(actionLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
             </select>
           </Field>
           <Field label="Période : du" htmlFor="j-debut">
-            <Input id="j-debut" type="date" value={dateDebut} onChange={(e) => setDateDebut(e.target.value)} />
+            <Input id="j-debut" type="date" value={filtres.from} onChange={(e) => changerFiltre('from', e.target.value)} />
           </Field>
           <Field label="au" htmlFor="j-fin">
-            <Input id="j-fin" type="date" value={dateFin} onChange={(e) => setDateFin(e.target.value)} />
+            <Input id="j-fin" type="date" value={filtres.before} onChange={(e) => changerFiltre('before', e.target.value)} />
           </Field>
           <Field label="Élément concerné" htmlFor="j-cible">
-            <Input id="j-cible" type="search" value={cible} onChange={(e) => setCible(e.target.value)} placeholder="Titre, compte, fichier…" />
+            <Input id="j-cible" type="search" maxLength={255} value={filtres.element} onChange={(e) => changerFiltre('element', e.target.value)} placeholder="Titre, nom, fichier ou identifiant" />
+          </Field>
+          <Field label="Type d’élément" htmlFor="j-target">
+            <Select id="j-target" value={filtres.target} onChange={(e) => changerFiltre('target', e.target.value)}>
+              <option value="">Tous les éléments</option>
+              {Object.entries(targetLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+            </Select>
           </Field>
         </form>
 
         <p className="mt-4 text-mist" role="status">
           <ScrollText aria-hidden="true" className="mr-1 inline h-5 w-5" />
-          {entrees.length} entrée{entrees.length > 1 ? 's' : ''} affichée{entrees.length > 1 ? 's' : ''} sur {db.logs.length}
+          {data && `Page ${filtres.page} · ${data.entries.length} entrée${data.entries.length > 1 ? 's' : ''}`}
         </p>
 
-        {entrees.length === 0 ? (
+        {datesInvalides ? <Alert kind="erreur" title="Période invalide">La date de début doit précéder ou égaler la date de fin.</Alert>
+          : error ? <Alert kind="erreur" title="Journal indisponible">{error}</Alert>
+          : !data ? <p role="status">Chargement du journal…</p>
+          : data.entries.length === 0 ? (
           <div className="mt-6">
             <EmptyState
               icon={ScrollText}
@@ -129,53 +130,43 @@ export function JournalAdmin() {
           </div>
         ) : (
           <ol className="mt-6 flex flex-col gap-3">
-            {entrees.map((l) => {
-              const u = db.users.find((x) => x.id === l.adminId)
-              return (
+            {data.entries.map((l) => (
                 <li key={l.id} className="rounded-2xl border border-line bg-white p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant={VARIANTS[l.type]}>{TYPES.find((t) => t.id === l.type)?.label ?? l.type}</Badge>
-                      <span className="font-bold">{l.action}</span>
+                      <Badge variant={VARIANTS[l.target]}>{targetLabels[l.target]}</Badge>
+                      <span className="font-bold">{actionLabels[l.action]}</span>
                     </div>
                     <span className="text-[0.875rem] text-mist">
                       <time dateTime={l.at}>{formatDateTime(l.at)}</time>
                     </span>
                   </div>
                   <p className="mt-1 text-[1.0625rem]">
-                    Élément : <strong>{l.cible}</strong>
+                    Élément : <strong>{journalTarget(l)}</strong>
                   </p>
                   <p className="text-[0.9375rem] text-mist">
-                    Par {u ? fullName(u) : 'un administrateur'}
-                    {l.details ? ` — ${l.details}` : ''}
+                    {journalActor(l)} — {l.description}
                   </p>
                   <div className="mt-2">
-                    <Button size="petit" variant="danger" onClick={() => setASupprimer(l.id)}>
+                    <Button size="petit" variant="danger" onClick={() => { setErreurSuppression(''); setASupprimer(l) }}>
                       <Trash2 aria-hidden="true" className="h-4 w-4" />
                       Supprimer cette entrée
                     </Button>
                   </div>
                 </li>
-              )
-            })}
+            ))}
           </ol>
         )}
+        {(filtres.page > 1 || data?.hasNext) && <nav className="mt-6 flex gap-3" aria-label="Pages du journal">
+          <Button variant="secondaire" disabled={filtres.page === 1} onClick={() => setFiltres(previous => ({ ...previous, page: previous.page - 1 }))}>Précédente</Button>
+          <Button variant="secondaire" disabled={!data?.hasNext} onClick={() => setFiltres(previous => ({ ...previous, page: previous.page + 1 }))}>Suivante</Button>
+        </nav>}
       </div>
 
       <ConfirmDialog
         open={!!aSupprimer}
         onClose={() => setASupprimer(null)}
-        onConfirm={() => {
-          if (aSupprimer) {
-            const entree = db.logs.find((l) => l.id === aSupprimer)
-            deleteLogEntry(aSupprimer, adminId)
-            toast(
-              `Entrée supprimée (${entree?.action ?? ''}). La suppression manuelle est elle-même inscrite dans le journal.`,
-              'info',
-            )
-          }
-          setASupprimer(null)
-        }}
+        onConfirm={supprimer}
         title="Supprimer cette entrée du journal ?"
         confirmLabel="Supprimer l'entrée"
       >
@@ -183,6 +174,7 @@ export function JournalAdmin() {
           L'entrée sera retirée du journal. Conformément au cahier des charges, cette suppression
           manuelle sera elle-même enregistrée dans le journal d'activité.
         </p>
+        {erreurSuppression && <p role="alert" className="mt-3 text-brique">{erreurSuppression}</p>}
       </ConfirmDialog>
     </>
   )
