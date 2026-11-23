@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
@@ -19,6 +18,7 @@ import {
   blockTypes,
 } from './content.dto.js';
 import { contentLog, contentSlug, lockAdmin } from './content.shared.js';
+import { ContentInputError } from './content-input.error.js';
 import { TrailsService } from './trails.js';
 import type { TrailDto } from './trails.js';
 
@@ -136,11 +136,12 @@ export function blockInput(block: BlockDto, position: number) {
   const { text, items, alt, mediaId } = block;
   const url = block.url?.trim();
   if (type === 'IMAGE') {
-    if (!mediaId || !alt?.trim()) throw new BadRequestException();
+    if (!mediaId || !alt?.trim())
+      throw new ContentInputError(`Bloc ${position + 1} : choisissez une image et renseignez son texte alternatif.`);
     return { type, position, mediaId, data: { alt: alt.trim() } };
   }
   if (type === 'YOUTUBE' && url && !youtubeLink(url))
-    throw new BadRequestException();
+    throw new ContentInputError(`Bloc ${position + 1} : saisissez une adresse de vidéo YouTube valide.`);
   if (type === 'LINK' && url) {
     const relative = /^\/(?![\/\\])[^\\\r\n\t]*$/.test(url);
     const parsed = URL.parse(url);
@@ -151,7 +152,7 @@ export function blockInput(block: BlockDto, position: number) {
         parsed.username ||
         parsed.password)
     ) {
-      throw new BadRequestException();
+      throw new ContentInputError(`Bloc ${position + 1} : corrigez l’adresse du lien.`);
     }
   }
   const data: Prisma.InputJsonObject = {
@@ -380,7 +381,7 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
             at <= new Date() ||
             !/(?:Z|[+-]\d\d:\d\d)$/i.test(dto.at!)
           ) {
-            throw new BadRequestException();
+            throw new ContentInputError('Choisissez une date et une heure de publication futures.');
           }
           this.validateVersion(working ?? published);
           await tx.article.update({
@@ -509,19 +510,19 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
         },
       }))
     ) {
-      throw new BadRequestException();
+      throw new ContentInputError('Une image sélectionnée est indisponible. Remplacez-la ou retirez-la.');
     }
   }
 
   private validateVersion(version?: Version) {
-    if (!version?.title.trim()) throw new BadRequestException();
+    if (!version) throw new ContentInputError('Enregistrez une version de l’article avant de le publier.');
+    if (!version.title.trim()) throw new ContentInputError('Renseignez le titre de l’article.');
     for (const block of version.blocks) {
       const data = block.data as { url?: string };
-      if (
-        (block.type === 'YOUTUBE' && !data.url) ||
-        (block.type === 'LINK' && !data.url)
-      )
-        throw new BadRequestException();
+      if (block.type === 'YOUTUBE' && !data.url?.trim())
+        throw new ContentInputError(`Bloc ${block.position + 1} : renseignez l’adresse de la vidéo YouTube.`);
+      if (block.type === 'LINK' && !data.url?.trim())
+        throw new ContentInputError(`Bloc ${block.position + 1} : renseignez l’adresse du lien.`);
     }
   }
 

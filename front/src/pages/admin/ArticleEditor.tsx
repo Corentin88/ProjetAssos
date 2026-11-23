@@ -1,6 +1,6 @@
 import { ContentImage } from '../../components/content/ContentImage'
-import { ApiError, protectedRequest } from '../../lib/auth'
-import { useMemo, useRef, useState } from 'react'
+import { protectedRequest } from '../../lib/auth'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -25,7 +25,7 @@ import { TrailDetails } from '../../components/content/TrailDetails'
 import { BlockEditor } from '../../components/admin/BlockEditor'
 import { MediaPicker } from '../../components/admin/MediaPicker'
 import { ArticleStatutBadge } from '../../components/content/ArticleCard'
-import { BlockView } from '../../components/content/BlockRenderer'
+import { BlockView, estLienAutorise, youtubeId } from '../../components/content/BlockRenderer'
 import { Button, Field, Input, buttonClasses } from '../../components/ui/form'
 import { ConfirmDialog } from '../../components/ui/overlay'
 import { Alert } from '../../components/ui/feedback'
@@ -63,7 +63,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
   const [trail, setTrail] = useState(() => editableTrail(existant?.trail))
   const [gpxFile, setGpxFile] = useState<File | null>(null)
   const [saving, setSaving] = useState(false)
-  const pendingSave = useRef(false)
+  const [validation, setValidation] = useState<'draft' | 'publish' | 'schedule' | 'reprogram' | null>(null)
   const [categorieIds, setCategorieIds] = useState<string[]>(existant?.categorieIds ?? [])
   const [tagIds, setTagIds] = useState<string[]>(existant?.tagIds ?? [])
   const [coverMediaId, setCoverMediaId] = useState<string | null>(existant?.coverMediaId ?? null)
@@ -76,48 +76,86 @@ function ArticleForm({ existant }: { existant?: Article }) {
   const [parametresOuverts, setParametresOuverts] = useState(false)
 
   const enCorbeille = existant?.statut === 'corbeille'
+  const dateId = existant?.statut === 'programme' ? 'art-prog-reprog' : 'art-prog'
 
-  const sauver = async () => {
-    if (blocks.some(block => block.type === 'image' && (!block.mediaId || !block.alt?.trim()))) {
-      throw new ApiError(400, 'Sélectionnez une image et renseignez son texte alternatif dans chaque bloc image.')
+  function verifier(mode: typeof validation) {
+    const errors: Record<string, string> = {}
+    if (!mode) return errors
+    if ((mode === 'schedule' || mode === 'reprogram') && !(new Date(dateProgrammation).getTime() > Date.now()))
+      errors[dateId] = 'Choisissez une date et une heure de publication futures.'
+    if (mode === 'reprogram') return errors
+    const publication = mode !== 'draft' || existant?.statut === 'programme'
+    if (publication && !titre.trim()) errors['art-titre'] = 'Renseignez le titre de l’article.'
+    for (const block of blocks) {
+      const url = block.url?.trim() ?? ''
+      if (block.type === 'image' && (!block.mediaId || !block.alt?.trim()))
+        errors[`blk-alt-${block.id}`] = 'Choisissez une image et renseignez son texte alternatif.'
+      if (block.type === 'video' && (url ? !youtubeId(url) : publication))
+        errors[`blk-${block.id}`] = url ? 'Saisissez une adresse YouTube valide.' : 'Renseignez l’adresse de la vidéo YouTube.'
+      if (block.type === 'lien' && (url ? !estLienAutorise(url) : publication))
+        errors[`blk-url-${block.id}`] = url ? 'Saisissez une adresse de lien valide.' : 'Renseignez l’adresse du lien.'
+      if (block.type === 'liste') {
+        const items = block.items?.filter(item => item.trim()) ?? []
+        if (items.length > 100 || items.some(item => Array.from(item).length > 4000))
+          errors[`blk-${block.id}`] = 'Limitez la liste à 100 éléments de 4 000 caractères chacun.'
+      }
     }
-    if (pendingSave.current) throw new ApiError(409, 'Un enregistrement est déjà en cours.')
-    pendingSave.current = true
+    if (trail) {
+      if (!trail.name.trim()) errors['trail-name'] = 'Renseignez le nom du parcours.'
+      if (!gpxFile && !trail.gpxMediaId) errors['trail-file'] = 'Sélectionnez un fichier GPX pour le parcours.'
+      if (gpxFile && (!gpxFile.size || gpxFile.size > 5 * 1024 * 1024))
+        errors['trail-file'] = 'Sélectionnez un fichier GPX non vide de 5 Mio maximum.'
+      for (const champ of ['distance', 'elevationGain', 'elevationLoss'] as const) {
+        if (!Number.isFinite(trail[champ]) || trail[champ] < 0)
+          errors[`trail-${champ}`] = 'Saisissez un nombre positif ou nul.'
+      }
+      if (!Number.isInteger(trail.duration) || trail.duration < 0 || trail.duration > 2147483647)
+        errors['trail-duration'] = 'Saisissez une durée entière en minutes.'
+    }
+    return errors
+  }
+
+  const erreurs = verifier(validation)
+  const soumettre = (mode: NonNullable<typeof validation>, action: () => Promise<void>) => effectuer(async () => {
+    const premierChamp = Object.keys(verifier(mode))[0]
+    if (premierChamp) {
+      setValidation(mode)
+      if (premierChamp === dateId) setParametresOuverts(true)
+      requestAnimationFrame(() => document.getElementById(premierChamp)?.focus())
+      return
+    }
+    setValidation(null)
     setSaving(true)
     try {
-      let gpxMediaId = trail?.gpxMediaId
-      if (trail) {
-        if (!trail.name.trim()) throw new ApiError(400, 'Renseignez le nom du parcours.')
-        if (gpxFile) {
-          if (gpxFile.size > 5 * 1024 * 1024) throw new ApiError(400, 'Le fichier GPX dépasse 5 Mio.')
-          const body = new FormData()
-          body.set('file', gpxFile)
-          gpxMediaId = (await protectedRequest<{ id: string }>('/admin/content/gpx', 'POST', body)).id
-          setTrail({ ...trail, gpxMediaId })
-          setGpxFile(null)
-        }
-        if (!gpxMediaId) throw new ApiError(400, 'Sélectionnez un fichier GPX pour le parcours.')
-      }
-      return await saveArticle({ titre, blocks, categorieIds, tagIds, coverMediaId,
-        trail: trail && gpxMediaId ? { ...trail, gpxMediaId } : null }, existant?.id)
+      await action()
     } finally {
-      pendingSave.current = false
       setSaving(false)
     }
+  })
+  const sauver = async () => {
+    let gpxMediaId = trail?.gpxMediaId
+    if (trail && gpxFile) {
+      const body = new FormData()
+      body.set('file', gpxFile)
+      gpxMediaId = (await protectedRequest<{ id: string }>('/admin/content/gpx', 'POST', body)).id
+      setTrail({ ...trail, gpxMediaId })
+      setGpxFile(null)
+    }
+    return await saveArticle({ titre, blocks, categorieIds, tagIds, coverMediaId,
+      trail: trail && gpxMediaId ? { ...trail, gpxMediaId } : null }, existant?.id)
   }
-  const enregistrer = () => effectuer(async () => {
+  const enregistrer = () => soumettre('draft', async () => {
     const article = await sauver()
     if (nouveau) navigate(`/admin/articles/${article.id}`, { replace: true })
     toast(existant?.statut === 'publie'
       ? 'Version de travail enregistrée. La version publique reste visible.'
       : 'Article enregistré.')
   })
-  const previsualiser = () => effectuer(async () => {
+  const previsualiser = () => soumettre('draft', async () => {
     const article = await sauver()
     navigate(`/admin/articles/${article.id}/preview`)
   })
-  const publier = () => effectuer(async () => {
-    if (!titre.trim()) throw new ApiError(400, 'Donnez un titre à l’article avant publication.')
+  const publier = () => soumettre('publish', async () => {
     const article = await sauver()
     if (nouveau) navigate(`/admin/articles/${article.id}`, { replace: true })
     await articleAction(article.id, 'publish')
@@ -135,17 +173,12 @@ function ArticleForm({ existant }: { existant?: Article }) {
     setCategorieIds(article.categorieIds)
     setTagIds(article.tagIds)
     setCoverMediaId(article.coverMediaId)
+    setValidation(null)
     toast('Modifications annulées. La version publique reste inchangée.', 'info')
   })
-  const programmer = (sauverAvant: boolean) => effectuer(async () => {
-    if (!existant || !dateProgrammation) {
-      toast('Choisissez une date de publication.', 'erreur')
-      return
-    }
-    if (sauverAvant) {
-      if (!titre.trim()) throw new ApiError(400, 'Donnez un titre à l’article avant de le programmer.')
-      await sauver()
-    }
+  const programmer = (sauverAvant: boolean) => soumettre(sauverAvant ? 'schedule' : 'reprogram', async () => {
+    if (!existant) return
+    if (sauverAvant) await sauver()
     await articleAction(existant.id, 'schedule', { at: new Date(dateProgrammation).toISOString() })
     toast('Programmation enregistrée.')
   })
@@ -205,6 +238,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
                   size="petit"
                   variant="blanc"
                   onClick={annuler}
+                  disabled={saving}
                 >
                   Annuler les modifications
                 </Button>
@@ -215,6 +249,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
                 size="petit"
                 variant="ocre"
                 onClick={publier}
+                disabled={saving}
               >
                 Publier
               </Button>
@@ -223,7 +258,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
               size="petit"
               variant="danger"
               onClick={() => setCorbeilleConfirme(true)}
-              disabled={nouveau}
+              disabled={nouveau || saving}
             >
               <Trash2 aria-hidden="true" className="h-4 w-4" />
               Corbeille
@@ -268,10 +303,14 @@ function ArticleForm({ existant }: { existant?: Article }) {
               label="Titre de l'article"
               htmlFor="art-titre"
               required
+              error={erreurs['art-titre']}
             >
               <Input
                 id="art-titre"
                 value={titre}
+                maxLength={255}
+                invalid={Boolean(erreurs['art-titre'])}
+                describedBy={erreurs['art-titre'] ? 'art-titre-err' : undefined}
                 onChange={(e) => setTitre(e.target.value)}
                 placeholder="Exemple : fête du village, assemblée générale…"
                 className="text-lg"
@@ -284,9 +323,10 @@ function ArticleForm({ existant }: { existant?: Article }) {
           </div>
 
           <div className="carte p-6">
-            <BlockEditor blocks={blocks} onChange={setBlocks} />
+            <BlockEditor blocks={blocks} onChange={setBlocks} errors={erreurs} />
           </div>
-          <TrailEditor trail={trail} file={gpxFile} onChange={setTrail} onFile={setGpxFile} disabled={enCorbeille || saving} />
+          <TrailEditor trail={trail} file={gpxFile} onChange={setTrail} onFile={setGpxFile}
+            errors={erreurs} disabled={enCorbeille || saving} />
 
           {/* Réafficher la barre d'actions en fin de contenu : éviter de
               remonter tout l'article pour enregistrer ou publier */}
@@ -299,6 +339,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
               <Button
                 variant="secondaire"
                 onClick={previsualiser}
+                disabled={saving}
               >
                 <Eye aria-hidden="true" className="h-5 w-5" />
                 Prévisualiser
@@ -347,16 +388,20 @@ function ArticleForm({ existant }: { existant?: Article }) {
                   <Field
                     label="Modifier la date de publication prévue"
                     htmlFor="art-prog-reprog"
+                    error={erreurs[dateId]}
                   >
                     <Input
                       id="art-prog-reprog"
                       type="datetime-local"
                       value={dateProgrammation}
+                      invalid={Boolean(erreurs[dateId])}
+                      describedBy={erreurs[dateId] ? `${dateId}-err` : undefined}
                       onChange={(e) => setDateProgrammation(e.target.value)}
                     />
                   </Field>
                   <Button
                     variant="ocre"
+                    disabled={saving}
                     onClick={() => programmer(false)}
                   >
                     <CalendarClock aria-hidden="true" className="h-5 w-5" />
@@ -364,6 +409,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
                   </Button>
                   <Button
                     variant="secondaire"
+                    disabled={saving}
                     onClick={() => effectuer(async () => {
                       await articleAction(existant.id, 'cancel-schedule')
                       toast("Programmation annulée : l'article est de nouveau un brouillon.", 'info')
@@ -379,17 +425,20 @@ function ArticleForm({ existant }: { existant?: Article }) {
                     label="Programmer la publication"
                     htmlFor="art-prog"
                     hint="Date et heure futures : l'article sera publié automatiquement."
+                    error={erreurs[dateId]}
                   >
                     <div className="flex flex-col gap-3">
                       <Input
                         id="art-prog"
                         type="datetime-local"
                         value={dateProgrammation}
+                        invalid={Boolean(erreurs[dateId])}
+                        describedBy={`${dateId}-hint${erreurs[dateId] ? ` ${dateId}-err` : ''}`}
                         onChange={(e) => setDateProgrammation(e.target.value)}
                       />
                       <Button
                         variant="ocre"
-                        disabled={!existant}
+                        disabled={saving}
                         onClick={() => programmer(true)}
                       >
                         <CalendarClock aria-hidden="true" className="h-5 w-5" />
@@ -403,6 +452,9 @@ function ArticleForm({ existant }: { existant?: Article }) {
 
             <section className="carte p-6">
               <h2 className="text-xl text-forest">Catégories</h2>
+              {!db.categories.length && (
+                <p className="mt-3 text-mist">Aucune catégorie créée. <Link className="underline" to="/admin/categories">Gérer les catégories et tags</Link>.</p>
+              )}
               <fieldset className="mt-3 flex flex-col gap-2">
                 <legend className="sr-only">Catégories de l'article</legend>
                 {db.categories.map((c) => (
@@ -421,14 +473,13 @@ function ArticleForm({ existant }: { existant?: Article }) {
                   </label>
                 ))}
               </fieldset>
-              <p className="mt-2 text-[0.875rem] text-mist">
-                Point à confirmer (cahier des charges §46) : le nombre exact de catégories
-                autorisées par article.
-              </p>
             </section>
 
             <section className="carte p-6">
               <h2 className="text-xl text-forest">Tags</h2>
+              {!db.tags.length && (
+                <p className="mt-3 text-mist">Aucun tag créé. <Link className="underline" to="/admin/categories">Gérer les catégories et tags</Link>.</p>
+              )}
               <fieldset className="mt-3 flex flex-wrap gap-2">
                 <legend className="sr-only">Tags de l'article</legend>
                 {db.tags.map((t) => {
@@ -453,9 +504,6 @@ function ArticleForm({ existant }: { existant?: Article }) {
                   )
                 })}
               </fieldset>
-              <p className="mt-2 text-[0.875rem] text-mist">
-                Le nombre maximal de tags reste à préciser.
-              </p>
             </section>
 
             <section className="carte p-6">

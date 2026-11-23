@@ -57,7 +57,7 @@ export function TrailDetails({ trail, articleId }: { trail: Trail; articleId?: s
   )
 }
 
-function TrailMap({ segments }: { segments: Trail['mapPreview']['segments'] }) {
+export function TrailMap({ segments }: { segments: Trail['mapPreview']['segments'] }) {
   const first = segments[0]?.[0]
   if (!first) return null
   // Déplie les longitudes autour du premier point pour conserver la continuité du tracé.

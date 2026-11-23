@@ -11,6 +11,7 @@ import type { Application, NextFunction, Request, Response } from 'express';
 import { createRequestLimit } from './auth/request-limit.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { RuntimeConfig } from './config/runtime.module.js';
+import { ContentInputError } from './content/content-input.error.js';
 
 @Catch()
 class ApiErrors implements ExceptionFilter {
@@ -41,7 +42,10 @@ class ApiErrors implements ExceptionFilter {
     };
     response.status(status).json({
       statusCode: status,
-      message: labels[status] ?? 'Erreur interne.',
+      message:
+        error instanceof ContentInputError
+          ? error.message
+          : (labels[status] ?? 'Erreur interne.'),
     });
   }
 }

@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  BadRequestException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -22,6 +21,7 @@ import { SessionService } from '../auth/session.service.js';
 import type { Principal } from '../auth/session.service.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { contentLog, lockAdmin } from './content.shared.js';
+import { ContentInputError } from './content-input.error.js';
 
 export class TrailDto {
   @IsString() @MaxLength(255) name: string;
@@ -127,8 +127,14 @@ export function parseGpx(file: Buffer) {
       ),
     };
   } catch {
-    throw new BadRequestException();
+    throw new ContentInputError('Sélectionnez un fichier GPX valide contenant un tracé ou un itinéraire d’au moins deux points.');
   }
+}
+
+export function parseGpxUpload(file?: Buffer) {
+  if (!file?.length || file.length > gpxSizeLimit)
+    throw new ContentInputError('Sélectionnez un fichier GPX de 5 Mio maximum.');
+  return parseGpx(file);
 }
 
 export const gpxLibrary = {
@@ -170,12 +176,11 @@ export class TrailsService {
   }
 
   async upload(actor: Principal, file?: Buffer, originalName?: string) {
-    if (!file?.length || file.length > gpxSizeLimit)
-      throw new BadRequestException();
-    parseGpx(file);
+    const data = file ?? Buffer.alloc(0);
+    parseGpxUpload(data);
     const path = `trails/${randomUUID()}.gpx`;
     await mkdir(directory, { recursive: true, mode: 0o700 });
-    await writeFile(gpxPath(path), file, { flag: 'wx', mode: 0o600 });
+    await writeFile(gpxPath(path), data, { flag: 'wx', mode: 0o600 });
     try {
       return await this.prisma.$transaction(async (tx) => {
         await lockAdmin(tx, this.sessions, actor);
@@ -190,7 +195,7 @@ export class TrailsService {
             type: 'GPX',
             format: 'GPX',
             path,
-            sizeBytes: BigInt(file.length),
+            sizeBytes: BigInt(data.length),
           },
         });
         await contentLog(
@@ -212,24 +217,37 @@ export class TrailsService {
     }
   }
 
+  async preview(id: string) {
+    const media = await this.prisma.media.findFirst({
+      where: { id, ...gpxLibrary },
+      select: { path: true },
+    });
+    if (!media) throw new NotFoundException();
+    return this.readPreview(media.path);
+  }
+
+  private async readPreview(path: string) {
+    const file = await readFile(gpxPath(path)).catch(() => {
+      throw new ContentInputError('Le fichier GPX est indisponible. Sélectionnez un autre fichier.');
+    });
+    return parseGpx(file);
+  }
+
   async data(tx: Prisma.TransactionClient, trail: TrailDto) {
-    if (!trail.name.trim()) throw new BadRequestException();
+    if (!trail.name.trim()) throw new ContentInputError('Renseignez le nom du parcours.');
     const media = await tx.media.findFirst({
       where: { id: trail.gpxMediaId, ...gpxLibrary },
     });
-    if (!media) throw new BadRequestException();
+    if (!media) throw new ContentInputError('Le fichier GPX est indisponible. Sélectionnez un autre fichier.');
     const locked = await tx.$queryRaw<
       { id: string }[]
     >`SELECT id FROM media WHERE id = ${media.id}::uuid FOR KEY SHARE`;
-    if (!locked.length) throw new BadRequestException();
-    const file = await readFile(gpxPath(media.path)).catch(() => {
-      throw new BadRequestException();
-    });
+    if (!locked.length) throw new ContentInputError('Le fichier GPX est indisponible. Sélectionnez un autre fichier.');
     return {
       ...trail,
       name: trail.name.trim(),
       description: trail.description.trim(),
-      mapPreview: parseGpx(file),
+      mapPreview: await this.readPreview(media.path),
     };
   }
 

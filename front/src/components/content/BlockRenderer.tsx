@@ -15,16 +15,27 @@ function lireAdresse(url: string): URL | null {
 /** Extrait l'identifiant YouTube d'une URL (§19 : vérification de l'URL) */
 export function youtubeId(url: string | undefined): string | null {
   const adresse = lireAdresse(url?.trim() ?? '')
-  if (!adresse || !['http:', 'https:'].includes(adresse.protocol)) return null
-  const [, route, segment] = adresse.pathname.split('/')
-  const domaine = adresse.hostname
+  if (!adresse || adresse.username || adresse.password || !['http:', 'https:'].includes(adresse.protocol)) return null
+  const domaine = adresse.host
   let id: string | null | undefined
-  if (domaine === 'youtu.be') id = route
+  if (domaine === 'youtu.be') id = adresse.pathname.slice(1)
   else if (['youtube.com', 'www.youtube.com', 'm.youtube.com', 'www.youtube-nocookie.com'].includes(domaine)) {
-    if (route === 'watch') id = adresse.searchParams.get('v')
-    if (route === 'embed' || route === 'shorts') id = segment
+    id = adresse.pathname === '/watch'
+      ? adresse.searchParams.get('v')
+      : adresse.pathname.match(/^\/(?:embed|shorts)\/([^/]+)$/)?.[1]
   }
   return id && /^[\w-]{11}$/.test(id) ? id : null
+}
+
+export function estLienInterne(url: string) {
+  return /^\/(?![\/\\])[^\\\r\n\t]*$/.test(url)
+}
+
+export function estLienAutorise(url: string) {
+  if (estLienInterne(url)) return true
+  const adresse = lireAdresse(url)
+  return Boolean(adresse && !adresse.username && !adresse.password
+    && ['http:', 'https:', 'mailto:', 'tel:'].includes(adresse.protocol))
 }
 
 /** Rendu public d'une liste de blocs (§18) */
@@ -105,7 +116,7 @@ export function BlockView({ block, sousPage = false }: { block: Block; sousPage?
     case 'liste':
       return (
         <ul className="text-base leading-relaxed marker:text-forest sm:text-lg">
-          {(block.items ?? []).map((item, i) => (
+          {(block.items ?? []).filter(item => item.trim() !== '').map((item, i) => (
             <li key={i}>{item}</li>
           ))}
         </ul>
@@ -115,16 +126,15 @@ export function BlockView({ block, sousPage = false }: { block: Block; sousPage?
       const libelle = block.text || url
       const classe = 'inline-flex min-h-11 items-center rounded-lg font-bold text-forest underline underline-offset-4 hover:bg-leaf-pale'
       // Les routes internes restent compatibles avec HashRouter. Les liens édités autorisent seulement les protocoles usuels.
-      if (/^\/(?![\/\\])[^\\\r\n\t]*$/.test(url)) {
+      if (estLienInterne(url)) {
         return <p><Link to={url} className={classe}>{libelle}</Link></p>
       }
-      const adresse = lireAdresse(url)
-      if (!adresse || adresse.username || adresse.password || !['http:', 'https:', 'mailto:', 'tel:'].includes(adresse.protocol)) {
+      if (!estLienAutorise(url)) {
         return libelle ? <p>{libelle}</p> : null
       }
       return (
         <p>
-          <a href={adresse.href} className={classe}>{libelle}</a>
+          <a href={url} className={classe}>{libelle}</a>
         </p>
       )
     }

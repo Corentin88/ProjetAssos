@@ -61,7 +61,7 @@ function articlePayload(input: ArticleInput) {
   return {
     ...input,
     blocks: input.blocks.map(({ type, text, url, mediaId, alt, items }: Block) => ({
-      type, text, url, mediaId, alt, items,
+      type, text, url, mediaId, alt, items: items?.filter(item => item.trim() !== ''),
     })),
   }
 }

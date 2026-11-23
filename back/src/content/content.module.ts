@@ -40,7 +40,7 @@ import {
 } from './content.dto.js';
 import { contentLog, contentSlug, lockAdmin } from './content.shared.js';
 import { MediaService } from './media.service.js';
-import { gpxSizeLimit, TrailsService } from './trails.js';
+import { gpxSizeLimit, parseGpxUpload, TrailsService } from './trails.js';
 
 function snapshot(
   prisma: PrismaService,
@@ -135,6 +135,9 @@ const uploadOptions = {
     fieldSize: 4096,
     parts: 4,
   },
+};
+const gpxUploadOptions = {
+  limits: { fileSize: gpxSizeLimit, files: 1, fields: 0, parts: 2 },
 };
 
 @Controller('admin/content')
@@ -250,12 +253,20 @@ class AdminContentController {
     return this.trails.list();
   }
 
+  @Get('gpx/:id/preview')
+  gpxPreview(@Param('id', ParseUUIDPipe) id: string) {
+    return this.trails.preview(id);
+  }
+
+  @Post('gpx/preview')
+  @HttpCode(200)
+  @UseInterceptors(FileInterceptor('file', gpxUploadOptions))
+  previewGpxUpload(@UploadedFile() file?: { buffer: Buffer }) {
+    return parseGpxUpload(file?.buffer);
+  }
+
   @Post('gpx')
-  @UseInterceptors(
-    FileInterceptor('file', {
-      limits: { fileSize: gpxSizeLimit, files: 1, fields: 0, parts: 2 },
-    }),
-  )
+  @UseInterceptors(FileInterceptor('file', gpxUploadOptions))
   uploadGpx(
     @CurrentUser() actor: Principal,
     @UploadedFile() file?: { buffer: Buffer; originalname: string },

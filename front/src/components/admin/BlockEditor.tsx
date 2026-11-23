@@ -41,10 +41,12 @@ export function BlockEditor({
   blocks,
   onChange,
   medias,
+  errors,
 }: {
   blocks: Block[]
   onChange: (blocks: Block[]) => void
   medias?: Media[]
+  errors?: Record<string, string>
 }) {
   const [menuOuvert, setMenuOuvert] = useState(false)
   const [aSupprimer, setASupprimer] = useState<number | null>(null)
@@ -227,6 +229,7 @@ export function BlockEditor({
         )
       case 'image': {
         const media = b.mediaId ? getMedia(b.mediaId) : undefined
+        const errorId = `blk-alt-${b.id}`
         return (
           <div className="flex flex-col gap-3">
             {media ? (
@@ -251,10 +254,13 @@ export function BlockEditor({
               htmlFor={`blk-alt-${b.id}`}
               required
               hint="Décrit l'image pour les lecteurs d'écran et si l'image ne se charge pas."
+              error={errors?.[errorId]}
             >
               <Input
                 id={`blk-alt-${b.id}`}
                 value={b.alt ?? ''}
+                invalid={Boolean(errors?.[errorId])}
+                describedBy={`${errorId}-hint${errors?.[errorId] ? ` ${errorId}-err` : ''}`}
                 onChange={(e) => majBloc(index, { alt: e.target.value })}
               />
             </Field>
@@ -263,11 +269,13 @@ export function BlockEditor({
       }
       case 'video': {
         const valide = youtubeId(b.url)
+        const fieldId = `blk-${b.id}`
         return (
           <Field
             label="Adresse de la vidéo YouTube"
             htmlFor={`blk-${b.id}`}
             required
+            error={errors?.[fieldId]}
             hint={
               valide
                 ? 'Adresse reconnue : le lecteur sera intégré à l\'article.'
@@ -278,6 +286,8 @@ export function BlockEditor({
               id={`blk-${b.id}`}
               type="url"
               value={b.url ?? ''}
+              invalid={Boolean(errors?.[fieldId])}
+              describedBy={`${fieldId}-hint${errors?.[fieldId] ? ` ${fieldId}-err` : ''}`}
               onChange={(e) => majBloc(index, { url: e.target.value })}
             />
           </Field>
@@ -290,15 +300,14 @@ export function BlockEditor({
             htmlFor={`blk-${b.id}`}
             required
             hint="Un élément par ligne."
+            error={errors?.[`blk-${b.id}`]}
           >
             <Textarea
               id={`blk-${b.id}`}
               value={(b.items ?? []).join('\n')}
-              onChange={(e) =>
-                majBloc(index, {
-                  items: e.target.value.split('\n').filter((l, i, arr) => l.trim() !== '' || i < arr.length - 1),
-                })
-              }
+              invalid={Boolean(errors?.[`blk-${b.id}`])}
+              describedBy={`blk-${b.id}-hint${errors?.[`blk-${b.id}`] ? ` blk-${b.id}-err` : ''}`}
+              onChange={(e) => majBloc(index, { items: e.target.value.split('\n') })}
               rows={4}
             />
           </Field>
@@ -318,11 +327,14 @@ export function BlockEditor({
               htmlFor={`blk-url-${b.id}`}
               required
               hint="Interne : /actualites, /association… Externe : https://…"
+              error={errors?.[`blk-url-${b.id}`]}
             >
               <Input
                 id={`blk-url-${b.id}`}
                 type="text"
                 value={b.url ?? ''}
+                invalid={Boolean(errors?.[`blk-url-${b.id}`])}
+                describedBy={`blk-url-${b.id}-hint${errors?.[`blk-url-${b.id}`] ? ` blk-url-${b.id}-err` : ''}`}
                 onChange={(e) => majBloc(index, { url: e.target.value })}
               />
             </Field>
