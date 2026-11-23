@@ -65,6 +65,8 @@ export type BlockType =
   | 'liste'
   | 'lien'
   | 'citation'
+  | 'randonnee'
+  | 'localisation'
 
 export interface Block {
   id: string
@@ -77,6 +79,12 @@ export interface Block {
   /** texte alternatif obligatoire pour les images */
   alt?: string
   items?: string[]
+  trail?: TrailBlockFields
+  visibility?: TrailVisibility
+  mapSettings?: TrailMapSettings
+  mapPreview?: Trail['mapPreview'] | null
+  gpxAvailable?: boolean
+  location?: LocationBlockFields
 }
 
 export type ArticleStatus = 'brouillon' | 'programme' | 'publie' | 'corbeille'
@@ -130,8 +138,60 @@ export interface GpxMedia {
 }
 
 export interface Trail extends TrailFields {
-  mapPreview: { segments: [number, number][][] }
+  mapPreview: TrailMapPreview
   gpxMediaId?: string
+}
+
+export interface TrailMeasurements {
+  name: string
+  distance: number | null
+  durationSeconds: number | null
+  departureAt: string | null
+  arrivalAt: string | null
+  elevationGain: number | null
+  elevationLoss: number | null
+  elevationMin: number | null
+  elevationMax: number | null
+}
+
+export interface TrailBlockFields extends TrailMeasurements {
+  description: string
+  difficulty: TrailFields['difficulty'] | null
+}
+
+export type TrailVisibility = Record<
+  'distance' | 'duration' | 'dates' | 'elevation' | 'altitude' | 'difficulty' | 'description' | 'map' | 'download',
+  boolean
+> & Partial<Record<'departure' | 'arrival' | 'elevationGain' | 'elevationLoss' | 'elevationMin' | 'elevationMax', boolean>>
+
+export type TrailMapSettings = {
+  slopes: boolean
+  profile: boolean
+  initialMode: 'classic' | 'slopes'
+}
+
+export type TrailSample = {
+  coordinates: [number, number]
+  distanceKm: number | null
+  elevation: number | null
+  time: string | null
+  slope: 'up' | 'down' | 'flat' | null
+  elevationBreak: boolean
+}
+
+export type TrailMapPreview = {
+  segments: [number, number][][]
+  samples?: TrailSample[][]
+}
+
+export type GpxPreview = TrailMapPreview & { details: TrailMeasurements }
+
+export interface LocationBlockFields {
+  title: string
+  address: string
+  description: string
+  latitude: number | null
+  longitude: number | null
 }
 
 export interface CommentEditHistory {

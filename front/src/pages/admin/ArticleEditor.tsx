@@ -1,5 +1,4 @@
 import { ContentImage } from '../../components/content/ContentImage'
-import { protectedRequest } from '../../lib/auth'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
@@ -13,14 +12,14 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import type { Article, TrailFields } from '../../types'
+import type { Article } from '../../types'
 import { db, useDb } from '../../lib/db'
 import { articleAction, saveArticle, useContentAction } from '../../lib/content'
 import { articleAuthorLabel, getMedia } from '../../lib/selectors'
 import { toInputDateTime, formatDateTime } from '../../lib/format'
 import { mediaUrl } from '../../lib/assets'
+import { editableArticleBlocks } from '../../lib/mapBlocks'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
-import { TrailEditor } from '../../components/admin/TrailEditor'
 import { TrailDetails } from '../../components/content/TrailDetails'
 import { BlockEditor } from '../../components/admin/BlockEditor'
 import { MediaPicker } from '../../components/admin/MediaPicker'
@@ -45,12 +44,6 @@ export function ArticleEditor() {
   return <ArticleForm key={id ?? 'nouveau'} existant={existant} />
 }
 
-function editableTrail(trail: Article['trail']): (TrailFields & { gpxMediaId?: string }) | null {
-  if (!trail) return null
-  const { name, description, distance, elevationGain, elevationLoss, duration, difficulty, gpxMediaId } = trail
-  return { name, description, distance, elevationGain, elevationLoss, duration, difficulty, gpxMediaId }
-}
-
 function ArticleForm({ existant }: { existant?: Article }) {
   const navigate = useNavigate()
   const { toast } = useToast()
@@ -59,9 +52,8 @@ function ArticleForm({ existant }: { existant?: Article }) {
 
   // État local du formulaire
   const [titre, setTitre] = useState(existant?.titre ?? '')
-  const [blocks, setBlocks] = useState(existant?.blocks ?? [])
-  const [trail, setTrail] = useState(() => editableTrail(existant?.trail))
-  const [gpxFile, setGpxFile] = useState<File | null>(null)
+  const [blocks, setBlocks] = useState(() => editableArticleBlocks(existant))
+  const [gpxEnCours, setGpxEnCours] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
   const [validation, setValidation] = useState<'draft' | 'publish' | 'schedule' | 'reprogram' | null>(null)
   const [categorieIds, setCategorieIds] = useState<string[]>(existant?.categorieIds ?? [])
@@ -76,6 +68,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
   const [parametresOuverts, setParametresOuverts] = useState(false)
 
   const enCorbeille = existant?.statut === 'corbeille'
+  const actionsBloquees = saving || gpxEnCours.length > 0
   const dateId = existant?.statut === 'programme' ? 'art-prog-reprog' : 'art-prog'
 
   function verifier(mode: typeof validation) {
@@ -99,24 +92,37 @@ function ArticleForm({ existant }: { existant?: Article }) {
         if (items.length > 100 || items.some(item => Array.from(item).length > 4000))
           errors[`blk-${block.id}`] = 'Limitez la liste à 100 éléments de 4 000 caractères chacun.'
       }
-    }
-    if (trail) {
-      if (!trail.name.trim()) errors['trail-name'] = 'Renseignez le nom du parcours.'
-      if (!gpxFile && !trail.gpxMediaId) errors['trail-file'] = 'Sélectionnez un fichier GPX pour le parcours.'
-      if (gpxFile && (!gpxFile.size || gpxFile.size > 5 * 1024 * 1024))
-        errors['trail-file'] = 'Sélectionnez un fichier GPX non vide de 5 Mio maximum.'
-      for (const champ of ['distance', 'elevationGain', 'elevationLoss'] as const) {
-        if (!Number.isFinite(trail[champ]) || trail[champ] < 0)
-          errors[`trail-${champ}`] = 'Saisissez un nombre positif ou nul.'
+      if (block.type === 'randonnee') {
+        if (publication && !block.trail?.name.trim()) errors[`blk-${block.id}-name`] = 'Renseignez le nom du parcours.'
+        if (publication && !block.mediaId) errors[`blk-${block.id}-file`] = 'Importez ou choisissez un fichier GPX.'
+        const trail = block.trail
+        if (trail) {
+          for (const champ of ['distance', 'elevationGain', 'elevationLoss'] as const) {
+            if (trail[champ] != null && trail[champ] < 0)
+              errors[`blk-${block.id}-${champ}`] = 'Saisissez un nombre positif ou nul.'
+          }
+          if (trail.durationSeconds != null && (!Number.isSafeInteger(trail.durationSeconds) || trail.durationSeconds < 0))
+            errors[`blk-${block.id}-durationSeconds`] = 'Saisissez une durée en secondes entières, positive ou nulle.'
+          if (trail.elevationMin != null && trail.elevationMax != null && trail.elevationMax < trail.elevationMin)
+            errors[`blk-${block.id}-elevationMax`] = 'Saisissez une altitude supérieure ou égale au minimum.'
+          if (trail.departureAt && trail.arrivalAt && Date.parse(trail.arrivalAt) < Date.parse(trail.departureAt))
+            errors[`blk-${block.id}-arrivalAt`] = 'Saisissez une arrivée postérieure ou égale au départ.'
+        }
       }
-      if (!Number.isInteger(trail.duration) || trail.duration < 0 || trail.duration > 2147483647)
-        errors['trail-duration'] = 'Saisissez une durée entière en minutes.'
+      if (block.type === 'localisation') {
+        const { latitude, longitude } = block.location ?? {}
+        if ((latitude != null && Math.abs(latitude) > 90) || (longitude != null && Math.abs(longitude) > 180))
+          errors[`blk-${block.id}-latitude`] = 'Saisissez une latitude entre −90 et 90 et une longitude entre −180 et 180.'
+        else if (publication && (latitude == null || longitude == null))
+          errors[`blk-${block.id}-latitude`] = 'Placez le marqueur en recherchant l’adresse ou en saisissant les coordonnées.'
+      }
     }
     return errors
   }
 
   const erreurs = verifier(validation)
   const soumettre = (mode: NonNullable<typeof validation>, action: () => Promise<void>) => effectuer(async () => {
+    if (actionsBloquees) return
     const premierChamp = Object.keys(verifier(mode))[0]
     if (premierChamp) {
       setValidation(mode)
@@ -132,18 +138,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
       setSaving(false)
     }
   })
-  const sauver = async () => {
-    let gpxMediaId = trail?.gpxMediaId
-    if (trail && gpxFile) {
-      const body = new FormData()
-      body.set('file', gpxFile)
-      gpxMediaId = (await protectedRequest<{ id: string }>('/admin/content/gpx', 'POST', body)).id
-      setTrail({ ...trail, gpxMediaId })
-      setGpxFile(null)
-    }
-    return await saveArticle({ titre, blocks, categorieIds, tagIds, coverMediaId,
-      trail: trail && gpxMediaId ? { ...trail, gpxMediaId } : null }, existant?.id)
-  }
+  const sauver = () => saveArticle({ titre, blocks, categorieIds, tagIds, coverMediaId }, existant?.id)
   const enregistrer = () => soumettre('draft', async () => {
     const article = await sauver()
     if (nouveau) navigate(`/admin/articles/${article.id}`, { replace: true })
@@ -167,9 +162,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
       ? await articleAction(existant.id, 'discard-work', { confirmed: true }) : existant
     if (!article) return
     setTitre(article.titre)
-    setBlocks(article.blocks)
-    setTrail(editableTrail(article.trail))
-    setGpxFile(null)
+    setBlocks(editableArticleBlocks(article))
     setCategorieIds(article.categorieIds)
     setTagIds(article.tagIds)
     setCoverMediaId(article.coverMediaId)
@@ -214,14 +207,14 @@ function ArticleForm({ existant }: { existant?: Article }) {
               Retour
             </Link>
             <span className="mr-auto flex items-center gap-2">{statutBadge}</span>
-            <Button size="petit" onClick={() => enregistrer()} disabled={saving}>
+            <Button size="petit" onClick={() => enregistrer()} disabled={actionsBloquees}>
               <Save aria-hidden="true" className="h-4 w-4" />
               {existant?.statut === 'publie' ? 'Enregistrer la version' : 'Enregistrer le brouillon'}
             </Button>
             <Button
               size="petit"
               variant="secondaire"
-              onClick={previsualiser} disabled={saving}
+              onClick={previsualiser} disabled={actionsBloquees}
             >
               <Eye aria-hidden="true" className="h-4 w-4" />
               Prévisualiser
@@ -230,7 +223,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
               <>
                 <Button
                   size="petit"
-                  onClick={publier} disabled={saving}
+                  onClick={publier} disabled={actionsBloquees}
                 >
                   Valider la nouvelle version
                 </Button>
@@ -238,7 +231,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
                   size="petit"
                   variant="blanc"
                   onClick={annuler}
-                  disabled={saving}
+                  disabled={actionsBloquees}
                 >
                   Annuler les modifications
                 </Button>
@@ -249,7 +242,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
                 size="petit"
                 variant="ocre"
                 onClick={publier}
-                disabled={saving}
+                disabled={actionsBloquees}
               >
                 Publier
               </Button>
@@ -258,7 +251,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
               size="petit"
               variant="danger"
               onClick={() => setCorbeilleConfirme(true)}
-              disabled={nouveau || saving}
+              disabled={nouveau || actionsBloquees}
             >
               <Trash2 aria-hidden="true" className="h-4 w-4" />
               Corbeille
@@ -322,24 +315,23 @@ function ArticleForm({ existant }: { existant?: Article }) {
             </p>
           </div>
 
-          <div className="carte p-6">
-            <BlockEditor blocks={blocks} onChange={setBlocks} errors={erreurs} />
-          </div>
-          <TrailEditor trail={trail} file={gpxFile} onChange={setTrail} onFile={setGpxFile}
-            errors={erreurs} disabled={enCorbeille || saving} />
+          <fieldset className="carte min-w-0 p-6" disabled={enCorbeille || saving}>
+            <BlockEditor article blocks={blocks} onChange={setBlocks} errors={erreurs}
+              onTrailBusy={(id, busy) => setGpxEnCours(ids => busy ? [...ids, id] : ids.filter(item => item !== id))} />
+          </fieldset>
 
           {/* Réafficher la barre d'actions en fin de contenu : éviter de
               remonter tout l'article pour enregistrer ou publier */}
           {!enCorbeille ? (
             <div className="flex flex-wrap gap-3">
-              <Button onClick={() => enregistrer()} disabled={saving}>
+              <Button onClick={() => enregistrer()} disabled={actionsBloquees}>
                 <Save aria-hidden="true" className="h-5 w-5" />
                 {existant?.statut === 'publie' ? 'Enregistrer la version' : 'Enregistrer le brouillon'}
               </Button>
               <Button
                 variant="secondaire"
                 onClick={previsualiser}
-                disabled={saving}
+                disabled={actionsBloquees}
               >
                 <Eye aria-hidden="true" className="h-5 w-5" />
                 Prévisualiser
@@ -401,7 +393,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
                   </Field>
                   <Button
                     variant="ocre"
-                    disabled={saving}
+                    disabled={actionsBloquees}
                     onClick={() => programmer(false)}
                   >
                     <CalendarClock aria-hidden="true" className="h-5 w-5" />
@@ -409,7 +401,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
                   </Button>
                   <Button
                     variant="secondaire"
-                    disabled={saving}
+                    disabled={actionsBloquees}
                     onClick={() => effectuer(async () => {
                       await articleAction(existant.id, 'cancel-schedule')
                       toast("Programmation annulée : l'article est de nouveau un brouillon.", 'info')
@@ -438,7 +430,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
                       />
                       <Button
                         variant="ocre"
-                        disabled={saving}
+                        disabled={actionsBloquees}
                         onClick={() => programmer(true)}
                       >
                         <CalendarClock aria-hidden="true" className="h-5 w-5" />

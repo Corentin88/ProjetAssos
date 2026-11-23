@@ -19,6 +19,7 @@ import {
 } from './content.dto.js';
 import { contentLog, contentSlug, lockAdmin } from './content.shared.js';
 import { ContentInputError } from './content-input.error.js';
+import { mapBlockInput, presentMapBlock, storedMapBlock } from './map-blocks.js';
 import { TrailsService } from './trails.js';
 import type { TrailDto } from './trails.js';
 
@@ -52,18 +53,22 @@ const frontendType = Object.fromEntries(
   Object.entries(blockTypes).map(([key, value]) => [value, key]),
 );
 
-export function presentBlocks(version: { blocks: Pick<Version['blocks'][number], 'id' | 'type' | 'data' | 'mediaId'>[] }) {
-  return version.blocks.map((block) => ({
-    ...(block.data as {
-      text?: string;
-      alt?: string;
-      url?: string;
-      items?: string[];
-    }),
-    id: block.id,
-    type: frontendType[block.type],
-    mediaId: block.mediaId ?? undefined,
-  }));
+export function presentBlocks(version: { blocks: Pick<Version['blocks'][number], 'id' | 'type' | 'data' | 'mediaId'>[] }, admin = false) {
+  return version.blocks.map((block) => {
+    const mapBlock = storedMapBlock(block.type, block.data);
+    if (mapBlock) return presentMapBlock(mapBlock, block.id, admin);
+    return {
+      ...(block.data as {
+        text?: string;
+        alt?: string;
+        url?: string;
+        items?: string[];
+      }),
+      id: block.id,
+      type: frontendType[block.type],
+      mediaId: block.mediaId ?? undefined,
+    };
+  });
 }
 
 function present(article: StoredArticle, admin: boolean) {
@@ -89,7 +94,7 @@ function present(article: StoredArticle, admin: boolean) {
     publishedAt: article.publishedAt,
     programmeAt: admin ? article.scheduledAt : null,
     titre: version.title,
-    blocks: presentBlocks(version),
+    blocks: presentBlocks(version, admin),
     coverMediaId: version.coverMediaId,
     categorieIds: version.categories.map((link) => link.categoryId),
     tagIds: version.tags.map((link) => link.tagId),
@@ -132,6 +137,8 @@ function youtubeLink(value: string) {
 }
 
 export function blockInput(block: BlockDto, position: number) {
+  if (block.type === 'randonnee' || block.type === 'localisation')
+    throw new ContentInputError('Ce bloc est disponible dans les articles.');
   const type = blockTypes[block.type];
   const { text, items, alt, mediaId } = block;
   const url = block.url?.trim();
@@ -223,12 +230,13 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
     return this.prisma.$transaction(async (tx) => {
       await lockAdmin(tx, this.sessions, actor);
       await this.verifyMedia(tx, dto);
+      const versionData = await this.versionData(tx, dto);
       const article = await tx.article.create({
         data: {
           slug: contentSlug(dto.titre),
           userId: actor.userId,
           versions: { create: {
-            kind: 'WORKING', ...this.versionData(dto),
+            kind: 'WORKING', ...versionData,
             ...(dto.trail ? { trail: { create: await this.trails.data(tx, dto.trail) } } : {}),
           } },
         },
@@ -250,6 +258,7 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
     return this.change(actor, id, async (tx, article) => {
       if (article.status === 'TRASHED') throw new ConflictException();
       await this.verifyMedia(tx, dto);
+      const versionData = await this.versionData(tx, dto);
       const working = article.versions.find(
         (version) => version.kind === 'WORKING',
       );
@@ -261,12 +270,12 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
         await tx.articleTag.deleteMany({ where: { versionId: working.id } });
         await tx.articleVersion.update({
           where: { id: working.id },
-          data: this.versionData(dto),
+          data: versionData,
         });
         if (dto.trail !== undefined) await this.saveTrail(tx, working.id, dto.trail);
       } else {
         const version = await tx.articleVersion.create({
-          data: { articleId: id, kind: 'WORKING', ...this.versionData(dto) },
+          data: { articleId: id, kind: 'WORKING', ...versionData },
         });
         if (dto.trail !== undefined) await this.saveTrail(tx, version.id, dto.trail);
         else await this.copyTrail(tx, article, version.id);
@@ -480,11 +489,19 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
     return article;
   }
 
-  private versionData(dto: ArticleDto) {
+  private async versionData(tx: Prisma.TransactionClient, dto: ArticleDto) {
+    const previews = new Map<string, Awaited<ReturnType<TrailsService['blockPreview']>>>();
+    const ids = new Set(dto.blocks.flatMap(block => block.type === 'randonnee' && block.mediaId ? [block.mediaId] : []));
+    for (const id of [...ids].sort()) previews.set(id, await this.trails.blockPreview(tx, id));
+    const blocks = dto.blocks.map((block, position) => {
+      if (block.type === 'localisation' || block.type === 'randonnee')
+        return mapBlockInput(block, position, previews.get(block.mediaId ?? '') ?? null);
+      return blockInput(block, position);
+    });
     return {
       title: dto.titre.trim(),
       coverMediaId: dto.coverMediaId,
-      blocks: { create: dto.blocks.map(blockInput) },
+      blocks: { create: blocks },
       categories: {
         create: dto.categorieIds.map((categoryId) => ({ categoryId })),
       },
@@ -495,7 +512,7 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
   private async verifyMedia(tx: Prisma.TransactionClient, dto: ArticleDto) {
     const ids = [
       ...new Set(
-        [dto.coverMediaId, ...dto.blocks.map((block) => block.mediaId)].filter(
+        [dto.coverMediaId, ...dto.blocks.filter(block => block.type !== 'randonnee').map(block => block.mediaId)].filter(
           (id): id is string => Boolean(id),
         ),
       ),
@@ -518,6 +535,11 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
     if (!version) throw new ContentInputError('Enregistrez une version de l’article avant de le publier.');
     if (!version.title.trim()) throw new ContentInputError('Renseignez le titre de l’article.');
     for (const block of version.blocks) {
+      const mapBlock = storedMapBlock(block.type, block.data);
+      if (mapBlock?.kind === 'randonnee' && (!mapBlock.trail.name || !mapBlock.trail.gpxMediaId || !mapBlock.trail.mapPreview))
+        throw new ContentInputError(`Bloc ${block.position + 1} : renseignez le nom du parcours et choisissez son GPX.`);
+      if (mapBlock?.kind === 'localisation' && (mapBlock.location.latitude == null || mapBlock.location.longitude == null))
+        throw new ContentInputError(`Bloc ${block.position + 1} : placez le marqueur en recherchant l’adresse ou en saisissant les coordonnées.`);
       const data = block.data as { url?: string };
       if (block.type === 'YOUTUBE' && !data.url?.trim())
         throw new ContentInputError(`Bloc ${block.position + 1} : renseignez l’adresse de la vidéo YouTube.`);

@@ -41,6 +41,8 @@ import {
 import { contentLog, contentSlug, lockAdmin } from './content.shared.js';
 import { MediaService } from './media.service.js';
 import { gpxSizeLimit, parseGpxUpload, TrailsService } from './trails.js';
+import { AddressSearchDto } from './map-blocks.dto.js';
+import { searchAddress } from './location-search.js';
 
 function snapshot(
   prisma: PrismaService,
@@ -111,8 +113,28 @@ class PublicContentController {
 
   @Get('articles/:id/gpx')
   @UseGuards(AccessGuard)
-  async gpx(@Param('id', ParseUUIDPipe) id: string) {
-    const { stream, size } = await this.trails.download(id);
+  gpx(@Param('id', ParseUUIDPipe) id: string) {
+    return this.gpxFile(id);
+  }
+
+  @Get('articles/:id/gpx/map')
+  gpxMap(@Param('id', ParseUUIDPipe) id: string) {
+    return this.trails.map(id);
+  }
+
+  @Get('articles/:id/blocks/:blockId/gpx/map')
+  gpxBlockMap(@Param('id', ParseUUIDPipe) id: string, @Param('blockId', ParseUUIDPipe) blockId: string) {
+    return this.trails.map(id, blockId);
+  }
+
+  @Get('articles/:id/blocks/:blockId/gpx')
+  @UseGuards(AccessGuard)
+  gpxBlock(@Param('id', ParseUUIDPipe) id: string, @Param('blockId', ParseUUIDPipe) blockId: string) {
+    return this.gpxFile(id, blockId);
+  }
+
+  private async gpxFile(id: string, blockId?: string) {
+    const { stream, size } = await this.trails.download(id, blockId);
     return new StreamableFile(stream, {
       length: size,
       type: 'application/gpx+xml',
@@ -251,6 +273,12 @@ class AdminContentController {
   @Get('gpx')
   listGpx() {
     return this.trails.list();
+  }
+
+  @Post('locations/search')
+  @HttpCode(200)
+  findAddress(@Body() dto: AddressSearchDto) {
+    return searchAddress(dto.address);
   }
 
   @Get('gpx/:id/preview')

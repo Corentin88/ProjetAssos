@@ -1,24 +1,77 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
+import type { ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Download, Mountain } from 'lucide-react'
-import type { Trail } from '../../types'
+import { Clock3, Download, Mountain, Route } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import type { Trail, TrailBlockFields, TrailMapSettings, TrailVisibility } from '../../types'
 import { authErrorMessage, protectedRequest, useCurrentUser } from '../../lib/auth'
-import { formatNombre } from '../../lib/format'
+import { formatDateTime, formatNombre } from '../../lib/format'
+import { defaultTrailMapSettings, defaultTrailVisibility } from '../../lib/mapBlocks'
 import { Alert } from '../ui/feedback'
 import { Button, buttonClasses } from '../ui/form'
+import { TrailMap } from './TrailMap'
 
 export const difficulties = { EASY: 'Facile', MEDIUM: 'Intermédiaire', HARD: 'Difficile' } as const
 
-export function TrailDetails({ trail, articleId }: { trail: Trail; articleId?: string }) {
+function elapsedTime(seconds: number) {
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor(seconds / 60) % 60
+  const remainder = seconds % 60
+  return [hours && `${hours} h`, minutes && `${minutes} min`, remainder && `${remainder} s`]
+    .filter(Boolean).join(' ') || '0 s'
+}
+
+type TrailMeasure = { label: string; value: ReactNode; icon?: LucideIcon }
+
+function TrailMeasures({ label, measures, primary = false }: {
+  label: string
+  measures: TrailMeasure[]
+  primary?: boolean
+}) {
+  const visible = measures.filter(measure => measure.value != null)
+  if (!visible.length) return null
+  return (
+    <div className={primary ? '' : 'rounded-xl border border-line bg-white px-3 py-2.5 sm:px-4'}>
+      {!primary && <h3 className="mb-2 text-base font-bold text-forest">{label}</h3>}
+      <dl aria-label={label} className={`grid min-w-0 gap-2 sm:gap-4 ${visible.length > 1 ? (primary ? 'grid-cols-2' : 'sm:grid-cols-2') : ''}`}>
+        {visible.map(({ label: name, value, icon: Icon }) => (
+          <div key={name} className={primary ? 'min-w-0 rounded-xl bg-leaf-pale p-2.5 sm:p-4' : 'min-w-0'}>
+            <dt className="flex items-center gap-2 text-sm font-semibold text-bark">
+              {Icon && <Icon aria-hidden="true" className="h-4 w-4 shrink-0 text-forest" />}
+              {name}
+            </dt>
+            <dd className={`m-0 mt-1 text-forest ${primary ? 'text-lg font-bold leading-tight sm:text-2xl' : 'font-semibold'}`}>
+              {value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  )
+}
+
+export function TrailDetails({ trail, mapPreview, visibility = defaultTrailVisibility,
+  mapSettings = defaultTrailMapSettings, mediaId, gpxAvailable, articleId, blockId }: {
+  trail: Trail | TrailBlockFields
+  mapPreview?: Trail['mapPreview'] | null
+  visibility?: TrailVisibility
+  mapSettings?: TrailMapSettings
+  mediaId?: string
+  gpxAvailable?: boolean
+  articleId?: string
+  blockId?: string
+}) {
   const user = useCurrentUser()
   const location = useLocation()
+  const headingId = useId()
   const [error, setError] = useState('')
   const [downloading, setDownloading] = useState(false)
   const download = async () => {
     setDownloading(true)
     setError('')
     try {
-      const file = await protectedRequest<Blob>(`/articles/${articleId}/gpx`, 'GET', undefined, true)
+      const path = blockId ? `/articles/${articleId}/blocks/${blockId}/gpx` : `/articles/${articleId}/gpx`
+      const file = await protectedRequest<Blob>(path, 'GET', undefined, true)
       const url = URL.createObjectURL(file)
       const link = document.createElement('a')
       link.href = url
@@ -29,22 +82,64 @@ export function TrailDetails({ trail, articleId }: { trail: Trail; articleId?: s
     finally { setDownloading(false) }
   }
 
+  const route = 'durationSeconds' in trail
+    ? trail : { ...trail, durationSeconds: trail.duration * 60, departureAt: null, arrivalAt: null, elevationMin: null, elevationMax: null }
+  const preview = mapPreview ?? ('mapPreview' in trail ? trail.mapPreview : null)
+  const gpxId = mediaId ?? ('gpxMediaId' in trail ? trail.gpxMediaId : undefined)
+  const hasTrace = Boolean(preview?.segments.some(segment => segment.length >= 2))
+  const canDownload = gpxAvailable ?? (hasTrace && Boolean(articleId || gpxId))
+  const mapPath = articleId
+    ? `/articles/${articleId}${blockId ? `/blocks/${blockId}` : ''}/gpx/map`
+    : gpxId ? `/admin/content/gpx/${gpxId}/preview` : undefined
+  const mesure = (enabled: boolean, value: number | null, unit: string, sign = '') =>
+    enabled && value != null ? `${value === 0 ? '' : sign}${formatNombre(value)} ${unit}` : null
+  const date = (enabled: boolean, value: string | null) =>
+    enabled && value ? <time dateTime={value}>{formatDateTime(value)}</time> : null
+  const primary = [
+    { label: 'Distance', value: mesure(visibility.distance, route.distance, 'km'), icon: Route },
+    { label: 'Durée écoulée', value: visibility.duration && route.durationSeconds != null ? elapsedTime(route.durationSeconds) : null, icon: Clock3 },
+  ]
+  const times = [
+    { label: 'Départ', value: date(visibility.dates && visibility.departure !== false, route.departureAt) },
+    { label: 'Arrivée', value: date(visibility.dates && visibility.arrival !== false, route.arrivalAt) },
+  ]
+  const elevation = [
+    { label: 'Dénivelé positif (D+)', value: mesure(visibility.elevation && visibility.elevationGain !== false, route.elevationGain, 'm', '+') },
+    { label: 'Dénivelé négatif (D−)', value: mesure(visibility.elevation && visibility.elevationLoss !== false, route.elevationLoss, 'm', '−') },
+  ]
+  const altitude = [
+    { label: 'Altitude minimale', value: mesure(visibility.altitude && visibility.elevationMin !== false, route.elevationMin, 'm') },
+    { label: 'Altitude maximale', value: mesure(visibility.altitude && visibility.elevationMax !== false, route.elevationMax, 'm') },
+  ]
+
   return (
-    <section aria-labelledby="titre-parcours" className="carte mt-6 p-4 sm:p-6">
-      <h2 id="titre-parcours" className="flex items-center gap-2 text-xl text-forest">
-        <Mountain aria-hidden="true" className="h-6 w-6" />
-        {trail.name}
-      </h2>
-      {trail.description && <p className="mt-2 whitespace-pre-line">{trail.description}</p>}
-      <dl className="my-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <div><dt className="font-bold">Distance</dt><dd>{formatNombre(trail.distance)} km</dd></div>
-        <div><dt className="font-bold">Durée</dt><dd>{formatNombre(trail.duration)} min</dd></div>
-        <div><dt className="font-bold">Difficulté</dt><dd>{difficulties[trail.difficulty]}</dd></div>
-        <div><dt className="font-bold">Dénivelé positif</dt><dd>{formatNombre(trail.elevationGain)} m</dd></div>
-        <div><dt className="font-bold">Dénivelé négatif</dt><dd>{formatNombre(trail.elevationLoss)} m</dd></div>
-      </dl>
-      <TrailMap segments={trail.mapPreview.segments} />
-      {articleId && <div className="mt-4">
+    <section aria-labelledby={headingId} className="carte mt-6 grid min-w-0 gap-4 p-4 sm:p-6">
+      <header className="min-w-0 [overflow-wrap:anywhere]">
+        <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
+          <h2 id={headingId} className="flex min-w-0 items-start gap-2 text-xl text-forest">
+            <Mountain aria-hidden="true" className="h-6 w-6 shrink-0" />
+            {route.name || 'Parcours de randonnée'}
+          </h2>
+          {visibility.difficulty && route.difficulty && (
+            <span className="rounded-full border border-line bg-sand px-2.5 py-1 text-sm font-semibold text-forest">
+              <span className="sr-only">Difficulté </span>{difficulties[route.difficulty]}
+            </span>
+          )}
+        </div>
+        {visibility.description && route.description && <p className="mt-2 whitespace-pre-line">{route.description}</p>}
+      </header>
+      <TrailMeasures label="Statistiques principales" measures={primary} primary />
+      <TrailMeasures label="Horaires" measures={times} />
+      <TrailMeasures label="Dénivelés" measures={elevation} />
+      <TrailMeasures label="Altitudes" measures={altitude} />
+      {visibility.map && (hasTrace || gpxAvailable || gpxId) && <TrailMap preview={preview} path={mapPath} secure={!articleId}
+        settings={mapSettings} showDistance={visibility.distance} showTimes={visibility.dates}
+        showAltitude={visibility.altitude || mapSettings.profile} />}
+      {visibility.map && !articleId && !hasTrace && !gpxId && <p>Associez un fichier GPX dans l’éditeur pour afficher le tracé.</p>}
+      {visibility.download && canDownload && blockId && !articleId && (
+        <Button className="mt-4" disabled><Download aria-hidden="true" className="h-5 w-5" /> Télécharger le GPX</Button>
+      )}
+      {visibility.download && canDownload && articleId && <div className="mt-4">
         {user?.statut === 'actif' ? (
           <Button onClick={download} disabled={downloading}><Download aria-hidden="true" className="h-5 w-5" /> Télécharger le GPX</Button>
         ) : !user ? (
@@ -54,38 +149,5 @@ export function TrailDetails({ trail, articleId }: { trail: Trail; articleId?: s
         {error && <Alert kind="erreur" title="Téléchargement impossible">{error}</Alert>}
       </div>}
     </section>
-  )
-}
-
-export function TrailMap({ segments }: { segments: Trail['mapPreview']['segments'] }) {
-  const first = segments[0]?.[0]
-  if (!first) return null
-  // Déplie les longitudes autour du premier point pour conserver la continuité du tracé.
-  const points = segments.map(segment => segment.map(([lat, lon]) => [lat, first[1] + ((lon - first[1] + 540) % 360) - 180]))
-  const bounds = points.flat().reduce(([south, west, north, east], [lat, lon]) =>
-    [Math.min(south, lat), Math.min(west, lon), Math.max(north, lat), Math.max(east, lon)],
-  [first[0], first[1], first[0], first[1]])
-  const [south, west, north, east] = bounds
-  const latitude = (north + south) / 2
-  const longitude = (((east + west) / 2 + 540) % 360) - 180
-  const correction = Math.max(0.001, Math.cos(latitude * Math.PI / 180))
-  const scale = Math.min(580 / Math.max((east - west) * correction, 0.000001), 260 / Math.max(north - south, 0.000001))
-  const zoom = Math.max(2, Math.min(17, Math.floor(Math.log2(360 / Math.max(east - west, north - south, 0.0001))) - 1))
-
-  return (
-    <figure className="rounded-xl border border-line bg-leaf-pale p-3">
-      <svg role="img" aria-label="Carte du tracé de randonnée" viewBox="0 0 640 320" className="mx-auto block max-h-72 w-full">
-        {points.map((segment, index) => (
-          <polyline key={index} fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round"
-            className="text-forest" points={segment.map(([lat, lon]) =>
-              `${320 + (lon - (east + west) / 2) * correction * scale},${160 + (latitude - lat) * scale}`).join(' ')}
-          />
-        ))}
-      </svg>
-      <figcaption className="text-sm">
-        <a className="font-bold text-forest underline underline-offset-4"
-          href={`https://www.openstreetmap.org/#map=${zoom}/${latitude}/${longitude}`}>Voir les environs sur OpenStreetMap</a>
-      </figcaption>
-    </figure>
   )
 }

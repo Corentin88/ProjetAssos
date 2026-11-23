@@ -17,7 +17,7 @@ import { PrismaService } from '../prisma/prisma.module.js';
 import { MediaDto } from './content.dto.js';
 import { contentLog, lockAdmin } from './content.shared.js';
 import { imageFormat } from './image-format.js';
-import { gpxLibrary, gpxPath } from './trails.js';
+import { gpxBlockUsage, gpxLibrary, gpxPath } from './trails.js';
 
 const library = {
   type: 'IMAGE',
@@ -212,6 +212,8 @@ export class MediaService {
         },
       });
       if (Object.values(usage._count).some((count) => count > 0))
+        throw new ConflictException();
+      if (item.type === 'GPX' && await gpxBlockUsage(tx, id))
         throw new ConflictException();
       await tx.media.delete({ where: { id } });
       await contentLog(

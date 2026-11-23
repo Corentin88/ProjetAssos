@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import { TrailDto } from './trails.js';
+import { LocationBlockDto, TrailBlockFieldsDto, TrailMapSettingsDto, TrailVisibilityDto } from './map-blocks.dto.js';
 import {
   ArrayMaxSize,
   ArrayUnique,
@@ -36,8 +37,32 @@ export const blockTypes = {
 } as const;
 
 export class BlockDto {
-  @IsIn(Object.keys(blockTypes))
-  type: keyof typeof blockTypes;
+  @IsIn([...Object.keys(blockTypes), 'randonnee', 'localisation'])
+  type: keyof typeof blockTypes | 'randonnee' | 'localisation';
+
+  @ValidateIf((block, value) => block.type === 'randonnee' || value !== undefined)
+  @IsObject()
+  @ValidateNested()
+  @Type(() => TrailBlockFieldsDto)
+  trail?: TrailBlockFieldsDto;
+
+  @ValidateIf((block, value) => block.type === 'randonnee' || value !== undefined)
+  @IsObject()
+  @ValidateNested()
+  @Type(() => TrailVisibilityDto)
+  visibility?: TrailVisibilityDto;
+
+  @ValidateIf((_block, value) => value !== undefined)
+  @IsObject()
+  @ValidateNested()
+  @Type(() => TrailMapSettingsDto)
+  mapSettings?: TrailMapSettingsDto;
+
+  @ValidateIf((block, value) => block.type === 'localisation' || value !== undefined)
+  @IsObject()
+  @ValidateNested()
+  @Type(() => LocationBlockDto)
+  location?: LocationBlockDto;
 
   @ValidateIf((_object, value) => value !== undefined)
   @IsString()

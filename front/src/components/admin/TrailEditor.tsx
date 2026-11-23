@@ -1,119 +1,263 @@
-import { useEffect, useRef, useState } from 'react'
-import type { GpxMedia, Trail, TrailFields } from '../../types'
-import { authErrorMessage, protectedRequest } from '../../lib/auth'
-import { useResource } from '../../lib/community'
-import { difficulties, TrailMap } from '../content/TrailDetails'
+import { useRef, useState } from 'react'
+import type { Block, GpxMedia, GpxPreview, TrailBlockFields, TrailMeasurements, TrailVisibility } from '../../types'
+import { ApiError, authErrorMessage, protectedRequest } from '../../lib/auth'
+import { toInputDateTime } from '../../lib/format'
+import { defaultTrailMapSettings, defaultTrailVisibility, emptyTrail } from '../../lib/mapBlocks'
+import { difficulties } from '../content/TrailDetails'
+import { TrailMap } from '../content/TrailMap'
 import { Button, Field, Input, Select, Textarea } from '../ui/form'
 
-export const emptyTrail: TrailFields = {
-  name: '', description: '', distance: 0, duration: 0,
-  difficulty: 'EASY', elevationGain: 0, elevationLoss: 0,
-}
 const numberFields = [
-  ['distance', 'Distance (km)', 'any'], ['duration', 'Durée (minutes)', '1'],
-  ['elevationGain', 'Dénivelé positif (m)', 'any'], ['elevationLoss', 'Dénivelé négatif (m)', 'any'],
+  ['distance', 'Distance (km)', 0, 'any'],
+  ['durationSeconds', 'Durée écoulée (secondes)', 0, 1],
+  ['elevationGain', 'Dénivelé positif (m)', 0, 'any'],
+  ['elevationLoss', 'Dénivelé négatif (m)', 0, 'any'],
+  ['elevationMin', 'Altitude minimale (m)', undefined, 'any'],
+  ['elevationMax', 'Altitude maximale (m)', undefined, 'any'],
 ] as const
+const dateFields = [['departureAt', 'Départ'], ['arrivalAt', 'Arrivée']] as const
+const visibilityLabels = {
+  distance: 'Distance', duration: 'Durée écoulée', dates: 'Dates et heures', elevation: 'Dénivelés',
+  altitude: 'Altitudes', difficulty: 'Difficulté', description: 'Description', map: 'Carte', download: 'Téléchargement GPX',
+} satisfies Partial<Record<keyof TrailVisibility, string>>
+const pairedVisibility = [
+  ['dates', 'Horaires', [['departure', 'Départ'], ['arrival', 'Arrivée']]],
+  ['elevation', 'Dénivelés', [['elevationGain', 'Dénivelé positif'], ['elevationLoss', 'Dénivelé négatif']]],
+  ['altitude', 'Altitudes', [['elevationMin', 'Altitude minimale'], ['elevationMax', 'Altitude maximale']]],
+] as const
+const measurementKeys = [...numberFields.map(([key]) => key), ...dateFields.map(([key]) => key)] as const
 
-export function TrailEditor({ trail, file, onChange, onFile, disabled, errors }: {
-  trail: (TrailFields & { gpxMediaId?: string }) | null
-  file: File | null
-  onChange: (trail: (TrailFields & { gpxMediaId?: string }) | null) => void
-  onFile: (file: File | null) => void
-  disabled: boolean
-  errors: Record<string, string>
+function prefillTrail(trail: TrailBlockFields, next: TrailMeasurements, previous?: TrailMeasurements): TrailBlockFields {
+  const measurements = Object.fromEntries(measurementKeys.map(key => [
+    key, trail[key] == null || trail[key] === previous?.[key] ? next[key] : trail[key],
+  ]))
+  return {
+    ...trail,
+    ...measurements,
+    name: !trail.name.trim() || trail.name === previous?.name ? next.name || trail.name : trail.name,
+  }
+}
+
+function getGpxPreview(id: string) {
+  return protectedRequest<GpxPreview>(`/admin/content/gpx/${id}/preview`)
+}
+
+export function TrailEditor({ block, files, filesError, refresh, onChange, onBusy, errors }: {
+  block: Block
+  files?: GpxMedia[]
+  filesError?: string
+  refresh: () => void
+  onChange: (patch: Partial<Block>) => void
+  onBusy?: (id: string, busy: boolean) => void
+  errors?: Record<string, string>
 }) {
-  const { data: files, error: filesError, refresh } = useResource<GpxMedia[]>(trail ? '/admin/content/gpx' : undefined, true)
-  const selectedId = trail?.gpxMediaId
+  const trail = block.trail ?? emptyTrail
+  const visibility = block.visibility ?? defaultTrailVisibility
+  const settings = block.mapSettings ?? defaultTrailMapSettings
+  const fieldId = (field: string) => `blk-${block.id}-${field}`
+  const [failedFile, setFailedFile] = useState<File | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [imported, setImported] = useState<{ id: string; name: string }>()
   const fileInput = useRef<HTMLInputElement>(null)
-  const { data: storedPreview, error: storedError } = useResource<Trail['mapPreview']>(
-    selectedId && !file ? `/admin/content/gpx/${selectedId}/preview` : undefined, true,
-  )
-  const [importPreview, setImportPreview] = useState<{
-    file: File; data?: Trail['mapPreview']; error?: string
-  }>()
-  useEffect(() => {
-    if (!file || !file.size || file.size > 5 * 1024 * 1024) return
-    let actif = true
-    const body = new FormData()
-    body.set('file', file)
-    protectedRequest<Trail['mapPreview']>('/admin/content/gpx/preview', 'POST', body).then(
-      data => { if (actif) setImportPreview({ file, data }) },
-      error => { if (actif) setImportPreview({ file, error: authErrorMessage(error) }) },
-    )
-    return () => { actif = false }
-  }, [file])
+  const pendingUpload = useRef<{ file: File; id: string }>()
+  const lastExtraction = useRef<{ id: string; details: TrailMeasurements }>()
 
-  const preview = file ? (importPreview?.file === file ? importPreview.data : undefined) : storedPreview
-  const fileError = errors['trail-file'] || (file && (!file.size || file.size > 5 * 1024 * 1024)
-    ? 'Sélectionnez un fichier GPX non vide de 5 Mio maximum.'
-    : file && importPreview?.file === file ? importPreview.error : undefined)
+  async function chooseGpx(load: () => Promise<{ id: string; preview: GpxPreview }>, localFile?: File) {
+    setError('')
+    setFailedFile(null)
+    setBusy(true)
+    onBusy?.(block.id, true)
+    try {
+      const previous = lastExtraction.current
+      const [result, priorDetails] = await Promise.all([
+        load(),
+        block.mediaId && previous?.id !== block.mediaId
+          ? getGpxPreview(block.mediaId).then(value => value.details).catch(() => undefined)
+          : Promise.resolve(previous?.details),
+      ])
+      const { id, preview } = result
+      if (!preview?.details || !preview.segments?.some(segment => segment.length >= 2))
+        throw new ApiError(502, 'Le serveur n’a pas renvoyé de tracé GPX exploitable. Réessayez.')
+      onChange({
+        mediaId: id,
+        mapPreview: { segments: preview.segments, samples: preview.samples },
+        trail: prefillTrail(trail, preview.details, priorDetails),
+      })
+      lastExtraction.current = { id, details: preview.details }
+      if (localFile) {
+        setImported({ id, name: localFile.name })
+        pendingUpload.current = undefined
+        refresh()
+      } else if (fileInput.current) fileInput.current.value = ''
+    } catch (error) {
+      setFailedFile(localFile ?? null)
+      setError(`${localFile ? 'Import GPX impossible.' : 'Association du GPX impossible.'} ${authErrorMessage(error)}`)
+    } finally {
+      setBusy(false)
+      onBusy?.(block.id, false)
+    }
+  }
+
+  function upload(file: File) {
+    if (!file.size || file.size > 5 * 1024 * 1024) {
+      setFailedFile(null)
+      setError('Sélectionnez un fichier GPX non vide de 5 Mio maximum.')
+      return
+    }
+    void chooseGpx(async () => {
+      if (pendingUpload.current?.file === file) {
+        const { id } = pendingUpload.current
+        return { id, preview: await getGpxPreview(id) }
+      }
+      const body = new FormData()
+      body.set('file', file)
+      const { id, preview } = await protectedRequest<{ id: string; preview?: GpxPreview }>('/admin/content/gpx', 'POST', body)
+      pendingUpload.current = { file, id }
+      return { id, preview: preview?.details ? preview : await getGpxPreview(id) }
+    }, file)
+  }
+
+  const gpxError = error || errors?.[fieldId('file')]
+  const nameError = errors?.[fieldId('name')]
+  const associatedName = files?.find(item => item.id === block.mediaId)?.nom
+    ?? (imported?.id === block.mediaId ? imported?.name : undefined)
 
   return (
-    <section aria-labelledby="edition-parcours" className="carte p-6">
-      <h2 id="edition-parcours" className="text-xl text-forest">Parcours de randonnée</h2>
-      {!trail ? (
-        <Button className="mt-3" variant="secondaire" disabled={disabled} onClick={() => onChange(emptyTrail)}>Ajouter un parcours</Button>
-      ) : (
-        <fieldset disabled={disabled} className="mt-4 grid gap-4 sm:grid-cols-2">
-          <Field label="Nom du parcours" htmlFor="trail-name" required error={errors['trail-name']}>
-            <Input id="trail-name" maxLength={255} value={trail.name}
-              invalid={Boolean(errors['trail-name'])} describedBy={errors['trail-name'] ? 'trail-name-err' : undefined}
-              onChange={event => onChange({ ...trail, name: event.target.value })} />
+    <fieldset className="grid min-w-0 gap-4 sm:grid-cols-2" disabled={busy} aria-busy={busy}>
+      <legend className="sr-only">Données du parcours</legend>
+      {!!files?.length && <Field label="Fichier GPX de la médiathèque" htmlFor={fieldId('media')}>
+        <Select id={fieldId('media')} value={block.mediaId ?? ''} onChange={event => {
+          const id = event.target.value
+          if (!id) {
+            setError('')
+            setFailedFile(null)
+            lastExtraction.current = undefined
+            if (fileInput.current) fileInput.current.value = ''
+            onChange({ mediaId: undefined, mapPreview: null })
+            return
+          }
+          void chooseGpx(async () => ({
+            id,
+            preview: await getGpxPreview(id),
+          }))
+        }}>
+          <option value="">Choisir un fichier</option>
+          {block.mediaId && !files.some(item => item.id === block.mediaId) && <option value={block.mediaId}>Fichier associé</option>}
+          {files.map(item => <option key={item.id} value={item.id}>{item.nom}</option>)}
+        </Select>
+      </Field>}
+      {filesError && <div className="sm:col-span-2">
+        <p role="alert">Impossible de charger les GPX de la médiathèque.</p>
+        <Button variant="secondaire" size="petit" onClick={refresh}>Réessayer</Button>
+      </div>}
+      <Field label="Fichier GPX à importer" htmlFor={fieldId('file')} error={gpxError}
+        hint="La sélection lance l’import et préremplit les mesures disponibles. 5 Mio maximum."
+      >
+        <Input ref={fileInput} id={fieldId('file')} type="file" accept=".gpx,application/gpx+xml"
+          invalid={Boolean(gpxError)} describedBy={`${fieldId('file')}-hint${gpxError ? ` ${fieldId('file')}-err` : ''}`}
+          onChange={event => {
+            const file = event.target.files?.[0]
+            if (file) upload(file)
+          }} />
+        {failedFile && <Button variant="secondaire" size="petit" onClick={() => upload(failedFile)}>Réessayer l’import GPX</Button>}
+        {block.mediaId && <p role="status">{associatedName ? `Fichier associé : ${associatedName}` : 'Fichier GPX associé.'}</p>}
+      </Field>
+      {busy && <p className="sm:col-span-2" role="status">Analyse du fichier GPX…</p>}
+      <Field label="Nom du parcours" htmlFor={fieldId('name')} required error={nameError}>
+        <Input id={fieldId('name')} value={trail.name} maxLength={255} invalid={Boolean(nameError)}
+          describedBy={nameError ? `${fieldId('name')}-err` : undefined}
+          onChange={event => onChange({ trail: { ...trail, name: event.target.value } })} />
+      </Field>
+      <Field label="Difficulté" htmlFor={fieldId('difficulty')}>
+        <Select id={fieldId('difficulty')} value={trail.difficulty ?? ''}
+          onChange={event => onChange({ trail: { ...trail, difficulty: (event.target.value || null) as TrailBlockFields['difficulty'] } })}>
+          <option value="">Non renseignée</option>
+          {Object.entries(difficulties).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+        </Select>
+      </Field>
+      {numberFields.map(([key, label, min, step]) => {
+        const id = fieldId(key)
+        const error = errors?.[id]
+        return (
+          <Field key={key} label={label} htmlFor={id} error={error}>
+            <Input id={id} type="number" min={min} step={step} value={trail[key] ?? ''}
+              invalid={Boolean(error)} describedBy={error ? `${id}-err` : undefined} onChange={event => {
+                const value = event.target.valueAsNumber
+                onChange({ trail: { ...trail, [key]: Number.isFinite(value) ? value : null } })
+              }} />
           </Field>
-          <Field label="Difficulté" htmlFor="trail-difficulty" required>
-            <Select id="trail-difficulty" value={trail.difficulty}
-              onChange={event => onChange({ ...trail, difficulty: event.target.value as TrailFields['difficulty'] })}>
-              {Object.entries(difficulties).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </Select>
-          </Field>
-          {numberFields.map(([key, label, step]) => (
-            <Field key={key} label={label} htmlFor={`trail-${key}`} required error={errors[`trail-${key}`]}>
-              <Input id={`trail-${key}`} type="number" min={0} step={step}
-                value={Number.isNaN(trail[key]) ? '' : trail[key]}
-                invalid={Boolean(errors[`trail-${key}`])}
-                describedBy={errors[`trail-${key}`] ? `trail-${key}-err` : undefined}
-                onChange={event => onChange({ ...trail, [key]: event.target.valueAsNumber })} />
-            </Field>
-          ))}
-          <Field label="Description du parcours" htmlFor="trail-description">
-            <Textarea id="trail-description" maxLength={4000} value={trail.description}
-              onChange={event => onChange({ ...trail, description: event.target.value })} />
-          </Field>
-          {!!files?.length && <Field label="Fichier GPX existant" htmlFor="trail-media">
-            <Select id="trail-media" value={!file ? selectedId ?? '' : ''}
+        )
+      })}
+      {dateFields.map(([key, label]) => {
+        const id = fieldId(key)
+        const error = errors?.[id]
+        const timestamp = trail[key]
+        return (
+          <Field key={key} label={`${label} (heure locale)`} htmlFor={id} error={error}>
+            <Input id={id} type="datetime-local" step={1}
+              value={timestamp ? `${toInputDateTime(timestamp)}:${String(new Date(timestamp).getSeconds()).padStart(2, '0')}` : ''}
+              invalid={Boolean(error)} describedBy={error ? `${id}-err` : undefined}
               onChange={event => {
-                if (fileInput.current) fileInput.current.value = ''
-                onFile(null)
-                onChange({ ...trail, gpxMediaId: event.target.value || undefined })
-              }}>
-              <option value="">Sélectionner un fichier</option>
-              {selectedId && !files.some(item => item.id === selectedId) && (
-                <option value={selectedId}>Fichier GPX associé</option>
-              )}
-              {files.map(item => <option key={item.id} value={item.id}>{item.nom}</option>)}
-            </Select>
-          </Field>}
-          {filesError && <div className="sm:col-span-2">
-            <p role="alert">Impossible de charger les fichiers GPX existants.</p>
-            <Button variant="secondaire" size="petit" onClick={() => void refresh()}>Réessayer</Button>
-          </div>}
-          <Field label="Fichier GPX à importer" htmlFor="trail-file" required={!trail.gpxMediaId} error={fileError}
-            hint={file?.name ?? (trail.gpxMediaId ? 'Un fichier GPX est associé au parcours.' : 'Fichier .gpx de 5 Mio maximum.')}>
-            <Input ref={fileInput} key={selectedId ?? ''} id="trail-file" type="file" accept=".gpx,application/gpx+xml"
-              invalid={Boolean(fileError)} describedBy={`trail-file-hint${fileError ? ' trail-file-err' : ''}`}
-              onChange={event => onFile(event.target.files?.[0] ?? null)} />
+                const date = new Date(event.target.value)
+                onChange({ trail: { ...trail, [key]: Number.isFinite(date.getTime()) ? date.toISOString() : null } })
+              }} />
           </Field>
-          <div className="sm:col-span-2">
-            {preview ? <TrailMap segments={preview.segments} />
-              : storedError ? <p role="alert">Aperçu du tracé indisponible. Essayez un autre fichier GPX.</p>
-              : (file || selectedId) && !fileError ? <p role="status">Chargement de l’aperçu du tracé…</p>
-              : null}
-          </div>
-          <div className="sm:col-span-2">
-            <Button variant="danger" onClick={() => { onFile(null); onChange(null) }}>Retirer le parcours</Button>
-          </div>
-        </fieldset>
-      )}
-    </section>
+        )
+      })}
+      <Field label="Description du parcours" htmlFor={fieldId('description')} className="sm:col-span-2">
+        <Textarea id={fieldId('description')} value={trail.description} maxLength={4000}
+          onChange={event => onChange({ trail: { ...trail, description: event.target.value } })} />
+      </Field>
+      <fieldset className="grid gap-2 sm:col-span-2 sm:grid-cols-2">
+        <legend className="mb-2 font-bold">Informations visibles dans l’article</legend>
+        {(Object.keys(visibilityLabels) as (keyof typeof visibilityLabels)[]).map(key => (
+          <label key={key} className="flex min-h-11 items-center gap-2">
+            <input type="checkbox" checked={visibility[key]} className="h-5 w-5 accent-forest"
+              onChange={event => onChange({ visibility: { ...visibility, [key]: event.target.checked } })} />
+            {visibilityLabels[key]}
+          </label>
+        ))}
+        {pairedVisibility.map(([group, label, fields]) => (
+          <fieldset key={group} className="rounded-lg border border-line px-3" disabled={!visibility[group]}>
+            <legend className="px-1 font-bold">{label}</legend>
+            {fields.map(([key, fieldLabel]) => (
+              <label key={key} className="flex min-h-11 items-center gap-2">
+                <input type="checkbox" checked={visibility[key] !== false} className="h-5 w-5 accent-forest disabled:opacity-50"
+                  onChange={event => onChange({ visibility: { ...visibility, [key]: event.target.checked } })} />
+                {fieldLabel}
+              </label>
+            ))}
+          </fieldset>
+        ))}
+      </fieldset>
+      <fieldset className="grid gap-2 sm:col-span-2">
+        <legend className="mb-2 font-bold">Options de la carte du parcours</legend>
+        <label className="flex min-h-11 items-center gap-2">
+          <input type="checkbox" checked={settings.slopes} className="h-5 w-5 accent-forest"
+            onChange={event => onChange({ mapSettings: { ...settings, slopes: event.target.checked,
+              initialMode: event.target.checked ? settings.initialMode : 'classic' } })} />
+          Autoriser les pentes en couleur
+        </label>
+        <label className="flex min-h-11 items-center gap-2">
+          <input type="checkbox" checked={settings.profile} className="h-5 w-5 accent-forest"
+            onChange={event => onChange({ mapSettings: { ...settings, profile: event.target.checked } })} />
+          Autoriser le profil altimétrique
+        </label>
+        <Field label="Mode initial de la carte" htmlFor={fieldId('map-mode')} required>
+          <Select id={fieldId('map-mode')} value={settings.initialMode}
+            onChange={event => onChange({ mapSettings: { ...settings, initialMode: event.target.value === 'slopes' ? 'slopes' : 'classic' } })}>
+            <option value="classic">Tracé classique</option>
+            <option value="slopes" disabled={!settings.slopes}>Pentes en couleur</option>
+          </Select>
+        </Field>
+      </fieldset>
+      {(block.mediaId || block.mapPreview) && <div className="sm:col-span-2">
+        <TrailMap key={`${block.mediaId}-${settings.initialMode}-${settings.slopes}-${settings.profile}`}
+          preview={block.mapPreview} path={block.mediaId ? `/admin/content/gpx/${block.mediaId}/preview` : undefined} secure
+          settings={settings} showDistance={visibility.distance} showTimes={visibility.dates}
+          showAltitude={visibility.altitude || settings.profile} />
+      </div>}
+    </fieldset>
   )
 }

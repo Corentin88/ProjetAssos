@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import { useToast } from '../hooks/useToast'
-import type { Article, Block, TrailFields } from '../types'
+import type { Article, Block } from '../types'
 import { ApiError, apiUrl, authErrorMessage, protectedRequest } from './auth'
 import { setContent, setContentError } from './db'
 import type { ContentSnapshot } from './db'
@@ -56,12 +56,13 @@ async function mutate<T>(path: string, method: string, body?: object) {
 }
 
 type ArticleInput = Pick<Article, 'titre' | 'blocks' | 'categorieIds' | 'tagIds' | 'coverMediaId'>
-  & { trail?: (TrailFields & { gpxMediaId: string }) | null }
 function articlePayload(input: ArticleInput) {
   return {
     ...input,
-    blocks: input.blocks.map(({ type, text, url, mediaId, alt, items }: Block) => ({
-      type, text, url, mediaId, alt, items: items?.filter(item => item.trim() !== ''),
+    // Le parcours historique est inclus dans les blocs transmis par l’éditeur.
+    trail: null,
+    blocks: input.blocks.map(({ type, text, url, mediaId, alt, items, trail, visibility, mapSettings, location }: Block) => ({
+      type, text, url, mediaId, alt, items: items?.filter(item => item.trim() !== ''), trail, visibility, mapSettings, location,
     })),
   }
 }

@@ -158,7 +158,7 @@ export function ArticleDetail() {
       ) : null}
 
       <div className="mt-5 rounded-2xl border border-line bg-white p-4 sm:p-7 md:p-9">
-        <BlockRenderer blocks={publicBlocks(article)} />
+        <BlockRenderer blocks={publicBlocks(article)} articleId={article.id} />
         <div className="mt-8 border-t border-line pt-6">
           <h2 className="text-lg">Catégories et tags de l'article</h2>
           <ul className="mt-3 flex flex-wrap items-center gap-2" aria-label="Catégories et tags">

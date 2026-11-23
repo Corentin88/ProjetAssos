@@ -3,6 +3,8 @@ import type { Block } from '../../types'
 import { Link } from 'react-router-dom'
 import { getMedia } from '../../lib/selectors'
 import { mediaUrl } from '../../lib/assets'
+import { TrailDetails } from './TrailDetails'
+import { LocationDetails } from './LocationMap'
 
 function lireAdresse(url: string): URL | null {
   try {
@@ -39,20 +41,26 @@ export function estLienAutorise(url: string) {
 }
 
 /** Rendu public d'une liste de blocs (§18) */
-export function BlockRenderer({ blocks }: { blocks: Block[] }) {
+export function BlockRenderer({ blocks, articleId }: { blocks: Block[]; articleId?: string }) {
   return (
     <div className="block-content [overflow-wrap:anywhere]">
       {blocks.map((b) => (
-        <BlockView key={b.id} block={b} sousPage />
+        <BlockView key={b.id} block={b} articleId={articleId} sousPage />
       ))}
     </div>
   )
 }
 
-export function BlockView({ block, sousPage = false }: { block: Block; sousPage?: boolean }) {
+export function BlockView({ block, sousPage = false, articleId }: { block: Block; sousPage?: boolean; articleId?: string }) {
   const Titre = sousPage ? 'h2' : 'h3'
   const SousTitre = sousPage ? 'h3' : 'h4'
   switch (block.type) {
+    case 'randonnee':
+      return block.trail ? <TrailDetails trail={block.trail} mapPreview={block.mapPreview} visibility={block.visibility}
+        mapSettings={block.mapSettings} mediaId={block.mediaId} gpxAvailable={block.gpxAvailable}
+        articleId={articleId} blockId={block.id} /> : null
+    case 'localisation':
+      return block.location ? <LocationDetails location={block.location} /> : null
     case 'titre':
       return <Titre className="mt-8 text-forest first:mt-0">{block.text}</Titre>
     case 'sous-titre':

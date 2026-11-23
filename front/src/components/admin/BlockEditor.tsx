@@ -1,5 +1,6 @@
 import { ContentImage } from '../content/ContentImage'
 import { useState } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import {
   ArrowDown,
   ArrowUp,
@@ -8,6 +9,8 @@ import {
   Image as ImageIcon,
   Link as LinkIcon,
   ListOrdered,
+  MapPin,
+  Mountain,
   Paperclip,
   Plus,
   Quote,
@@ -15,14 +18,18 @@ import {
   Trash2,
   Youtube,
 } from 'lucide-react'
-import type { Block, BlockType, Media } from '../../types'
+import type { Block, BlockType, GpxMedia, Media } from '../../types'
 import { newBlockId } from '../../data/articles'
 import { getMedia } from '../../lib/selectors'
 import { mediaUrl } from '../../lib/assets'
+import { useResource } from '../../lib/community'
+import { defaultTrailVisibility, emptyLocation, emptyTrail } from '../../lib/mapBlocks'
 import { youtubeId } from '../content/BlockRenderer'
 import { Button, Field, Input, Textarea } from '../ui/form'
 import { ConfirmDialog } from '../ui/overlay'
 import { MediaPicker } from './MediaPicker'
+import { TrailEditor } from './TrailEditor'
+import { LocationEditor } from './LocationEditor'
 
 const LIBELLES: Record<BlockType, { nom: string; icone: typeof Text; hint: string }> = {
   titre: { nom: 'Titre', icone: Heading1, hint: 'Titre de section (niveau de titre automatiquement hiérarchisé)' },
@@ -33,6 +40,8 @@ const LIBELLES: Record<BlockType, { nom: string; icone: typeof Text; hint: strin
   liste: { nom: 'Liste', icone: ListOrdered, hint: 'Liste à puces, un élément par ligne' },
   lien: { nom: 'Lien', icone: LinkIcon, hint: 'Lien interne (commence par /) ou externe' },
   citation: { nom: 'Citation', icone: Quote, hint: 'Citation mise en valeur' },
+  randonnee: { nom: 'Randonnée / GPX', icone: Mountain, hint: 'Parcours, mesures et fichier GPX' },
+  localisation: { nom: 'Carte / Localisation', icone: MapPin, hint: 'Un lieu repéré sur une carte' },
 }
 
 /** Éditeur d'article basé sur des blocs (§18) : ajout, modification,
@@ -42,20 +51,29 @@ export function BlockEditor({
   onChange,
   medias,
   errors,
+  article = false,
+  onTrailBusy,
 }: {
   blocks: Block[]
-  onChange: (blocks: Block[]) => void
+  onChange: Dispatch<SetStateAction<Block[]>>
   medias?: Media[]
   errors?: Record<string, string>
+  article?: boolean
+  onTrailBusy?: (id: string, busy: boolean) => void
 }) {
   const [menuOuvert, setMenuOuvert] = useState(false)
   const [aSupprimer, setASupprimer] = useState<number | null>(null)
   const [pickerIndex, setPickerIndex] = useState<number | null>(null)
+  const { data: gpxFiles, error: gpxError, refresh: refreshGpx } = useResource<GpxMedia[]>(
+    article && blocks.some(block => block.type === 'randonnee') ? '/admin/content/gpx' : undefined, true,
+  )
 
   const ajouter = (type: BlockType) => {
     const base: Block = { id: newBlockId('nvx'), type }
     if (type === 'liste') base.items = ['Premier élément', 'Deuxième élément']
     if (type === 'paragraphe') base.text = ''
+    if (type === 'randonnee') { base.trail = emptyTrail; base.visibility = defaultTrailVisibility }
+    if (type === 'localisation') base.location = emptyLocation
     onChange([...blocks, base])
     setMenuOuvert(false)
   }
@@ -151,7 +169,9 @@ export function BlockEditor({
         </Button>
         {menuOuvert ? (
           <div className="absolute z-10 mt-2 grid w-full max-w-xl grid-cols-2 gap-2 rounded-2xl border border-line bg-white p-3 shadow-xl sm:grid-cols-4">
-            {(Object.keys(LIBELLES) as BlockType[]).map((type) => {
+            {(Object.keys(LIBELLES) as BlockType[]).filter(type =>
+              article || (type !== 'randonnee' && type !== 'localisation')
+            ).map((type) => {
               const { nom, icone: Icone } = LIBELLES[type]
               return (
                 <button
@@ -204,6 +224,13 @@ export function BlockEditor({
 
   function renderChamp(b: Block, index: number) {
     switch (b.type) {
+      case 'randonnee':
+        return <TrailEditor block={b} files={gpxFiles} filesError={gpxError} refresh={() => void refreshGpx()}
+          onChange={patch => onChange(current => current.map(block => block.id === b.id ? { ...block, ...patch } : block))}
+          onBusy={onTrailBusy} errors={errors} />
+      case 'localisation':
+        return <LocationEditor id={b.id} location={b.location ?? emptyLocation}
+          error={errors?.[`blk-${b.id}-latitude`]} onChange={location => majBloc(index, { location })} />
       case 'titre':
       case 'sous-titre':
       case 'citation':
