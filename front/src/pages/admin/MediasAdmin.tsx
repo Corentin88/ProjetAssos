@@ -1,402 +1,319 @@
-import { ContentImage } from '../../components/content/ContentImage'
-import { useEffect, useMemo, useState } from 'react'
-import { Images, Import, Pencil, Search, Trash2 } from 'lucide-react'
-import type { GpxMedia, Media } from '../../types'
-import { useResource } from '../../lib/community'
-import { db, useDbVersion } from '../../lib/db'
-import { removeMedia, replaceMedia, saveMediaMetadata, uploadMedia, useContentAction } from '../../lib/content'
-import { formatDate, formatTaille } from '../../lib/format'
-import { mediaUrl } from '../../lib/assets'
+import { useEffect, useRef, useState } from 'react'
+import { FolderPlus, Import, Route } from 'lucide-react'
+import type { FormEvent } from 'react'
+import type { LibraryDetails, LibraryItem } from '../../types'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
-import { Alert, Badge, EmptyState } from '../../components/ui/feedback'
-import { Button, Field, Input, Textarea } from '../../components/ui/form'
-import { ConfirmDialog, Modal } from '../../components/ui/overlay'
+import { FolderOptions, folderPath, MediaLibrary, useMediaLibrary } from '../../components/admin/MediaLibrary'
+import { ContentImage } from '../../components/content/ContentImage'
+import { Alert } from '../../components/ui/feedback'
+import { Button, Field, Input, Select, Textarea } from '../../components/ui/form'
+import { Modal } from '../../components/ui/overlay'
+import { ApiError, authErrorMessage, protectedRequest } from '../../lib/auth'
+import { useResource } from '../../lib/community'
+import { removeMedia, replaceMedia, saveMediaMetadata, uploadMedia } from '../../lib/content'
+import { formatDate, formatTaille } from '../../lib/format'
 import { useToast } from '../../hooks/useToast'
 
-const FORMATS_ACCEPTES = "JPG, JPEG, PNG, WebP (le SVG n'est pas prévu pour la V1)"
-
-const mediaUsage = (id: string) => db.medias.find(media => media.id === id)?.usage
-  ?? { articles: [], avatars: 0, association: false }
-
-function totalUsages(id: string) {
-  const usage = mediaUsage(id)
-  return usage.articles.length + usage.avatars + (usage.association ? 1 : 0)
+type Action = 'import' | 'create-folder' | 'rename-folder' | 'delete-folder' | 'move' | 'edit' | 'replace' | 'delete'
+const titles: Record<Action, string> = {
+  import: 'Importer des médias',
+  'create-folder': 'Créer un dossier',
+  'rename-folder': 'Renommer le dossier',
+  'delete-folder': 'Supprimer le dossier',
+  move: 'Déplacer les médias',
+  edit: 'Modifier les métadonnées',
+  replace: 'Remplacer le fichier image',
+  delete: 'Supprimer le média',
 }
 
-/** Médiathèque (§36) : import, recherche, remplacement, suppression avec
- *  vérification d'usage, métadonnées et texte alternatif */
+const libraryUrl = '/admin/content'
+const imageFormats = 'image/jpeg,image/png,image/webp'
+const folderName = 'Non classés'
+
 export function MediasAdmin() {
-  const version = useDbVersion()
+  const library = useMediaLibrary()
+  const { results, folders, current } = library
   const { toast } = useToast()
-  const effectuer = useContentAction()
+  const [activeId, setActiveId] = useState<string>()
+  const [selected, setSelected] = useState(new Set<string>())
+  const [operation, setOperation] = useState<{ action: Action; ids?: string[] }>()
+  const details = useResource<LibraryDetails>(activeId ? `${libraryUrl}/media/${activeId}` : undefined, true)
+  const heading = useRef<HTMLHeadingElement>(null)
 
-  const [recherche, setRecherche] = useState('')
-  const [importOuvert, setImportOuvert] = useState(false)
-  const [aEditer, setAEditer] = useState<Media | null>(null)
-  const [edition, setEdition] = useState({ nom: '', alt: '' })
-  const [aRemplacer, setARemplacer] = useState<Media | null>(null)
-  const [fichierRemplacement, setFichierRemplacement] = useState<File | null>(null)
-  const [aSupprimer, setASupprimer] = useState<Media | null>(null)
+  function openItem(item: LibraryItem) {
+    setActiveId(item.id)
+    if (activeId === item.id) heading.current?.focus()
+  }
+  useEffect(() => {
+    if (activeId) heading.current?.focus()
+  }, [activeId])
 
-  const medias = useMemo(() => {
-    const q = recherche.trim().toLowerCase()
-    return db.medias.filter(
-      (m) =>
-        !q ||
-        m.nom.toLowerCase().includes(q) ||
-        m.alt.toLowerCase().includes(q),
-    )
-  }, [version, recherche])
+  function toggle(id: string) {
+    setSelected(previous => {
+      const next = new Set(previous)
+      if (next.has(id)) next.delete(id)
+      else if (next.size < 1000) next.add(id)
+      return next
+    })
+  }
 
-  const usage = aSupprimer ? mediaUsage(aSupprimer.id) : null
-  const utilise = aSupprimer ? totalUsages(aSupprimer.id) > 0 : false
+  async function afterWrite(action: Action, ids: string[] = []) {
+    if (action === 'delete') {
+      setActiveId(undefined)
+      setSelected(previous => new Set([...previous].filter(id => id !== activeId)))
+    }
+    if (action === 'move') setSelected(previous => new Set([...previous].filter(id => !ids.includes(id))))
+    if (action === 'delete-folder') library.setFolder(current?.parentId ?? 'unfiled')
+    await Promise.all([
+      results.refresh(),
+      action.endsWith('folder') ? folders.refresh() : undefined,
+      action !== 'delete' ? details.refresh() : undefined,
+    ])
+    setOperation(undefined)
+    toast({
+      import: 'Import terminé.',
+      'create-folder': 'Dossier créé.',
+      'rename-folder': 'Dossier renommé.',
+      'delete-folder': 'Dossier supprimé.',
+      move: 'Classement mis à jour.',
+      edit: 'Métadonnées enregistrées.',
+      replace: 'Image remplacée.',
+      delete: 'Média supprimé.',
+    }[action])
+  }
 
-  return (
-    <>
-      <AdminPageHead
-        titre="Médiathèque"
-        description="Espace commun d'images réutilisables : articles et page de l'association. La suppression d'une image encore utilisée est bloquée afin de ne pas casser un contenu existant."
-      >
-        <Button onClick={() => setImportOuvert(true)}>
-          <Import aria-hidden="true" className="h-5 w-5" />
-          Importer une image
+  const item = details.data
+  const usage = item?.usage
+  const used = Boolean(usage && (usage.articles.length || usage.avatars || usage.association || usage.trails))
+
+  return <>
+    <AdminPageHead titre="Médiathèque" description="Images et fichiers GPX réutilisables.">
+      <Button onClick={() => setOperation({ action: 'import' })}><Import aria-hidden="true" className="h-5 w-5" /> Importer</Button>
+    </AdminPageHead>
+    <div className="mx-auto grid max-w-6xl gap-5 px-4 pb-8 md:px-8">
+      <div className="flex flex-wrap gap-2">
+        <Button variant="secondaire" onClick={() => setOperation({ action: 'create-folder' })}>
+          <FolderPlus aria-hidden="true" className="h-5 w-5" /> {current ? 'Nouveau sous-dossier' : 'Nouveau dossier'}
         </Button>
-      </AdminPageHead>
-
-      <div className="mx-auto max-w-6xl px-4 py-8 md:px-8">
-        <form className="rounded-2xl border border-line bg-white p-5" onSubmit={(e) => e.preventDefault()}>
-          <Field label="Rechercher une image (nom ou texte alternatif)" htmlFor="media-recherche">
-            <div className="relative">
-              <Input
-                id="media-recherche"
-                type="search"
-                value={recherche}
-                onChange={(e) => setRecherche(e.target.value)}
-                placeholder="Exemple : village, fête, marché…"
-              />
-              <Search aria-hidden="true" className="pointer-events-none absolute right-4 top-1/2 h-5 w-5 -translate-y-1/2 text-mist" />
-            </div>
-          </Field>
-        </form>
-
-        <p className="mt-4 text-mist" role="status">
-          {medias.length} image{medias.length > 1 ? 's' : ''} sur {db.medias.length} — formats
-          prévus pour la V1 : {FORMATS_ACCEPTES}
-        </p>
-
-        {medias.length === 0 ? (
-          <div className="mt-6">
-            <EmptyState
-              icon={Images}
-              title="Aucune image trouvée"
-              description="Aucun média ne correspond à cette recherche."
-              action={
-                <Button onClick={() => setImportOuvert(true)}>Importer une image</Button>
-              }
-            />
-          </div>
-        ) : (
-          <ul className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {medias.map((m) => {
-              const u = mediaUsage(m.id)
-              const nbUsages = u.articles.length + u.avatars + (u.association ? 1 : 0)
-              return (
-                <li key={m.id} className="overflow-hidden rounded-2xl border border-line bg-white">
-                  <ContentImage
-                    src={mediaUrl(m.file)}
-                    alt={m.alt}
-                    className="h-44 w-full object-cover"
-                    loading="lazy"
-                  />
-                  <div className="p-4">
-                    <p className="truncate font-bold">{m.nom}</p>
-                    <p className="mt-1 text-[0.875rem] text-mist">
-                      {m.format} — {formatTaille(m.tailleKo)} — {m.largeur}×{m.hauteur} px
-                    </p>
-                    <p className="mt-1 text-[0.875rem] text-mist">
-                      Importée le {formatDate(m.createdAt)}
-                    </p>
-                    <p className="mt-2 line-clamp-2 text-[0.9375rem]" title={m.alt}>
-                      <Badge variant={nbUsages > 0 ? 'vert' : 'gris'} className="mr-2">
-                        {nbUsages} usage{nbUsages > 1 ? 's' : ''}
-                      </Badge>
-                      {m.alt}
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Button
-                        size="petit"
-                        variant="secondaire"
-                        onClick={() => {
-                          setAEditer(m)
-                          setEdition({ nom: m.nom, alt: m.alt })
-                        }}
-                      >
-                        <Pencil aria-hidden="true" className="h-4 w-4" />
-                        Modifier
-                      </Button>
-                      <Button size="petit" variant="fantome" onClick={() => {
-                        setFichierRemplacement(null)
-                        setARemplacer(m)
-                      }}>
-                        Remplacer le fichier
-                      </Button>
-                      <Button size="petit" variant="danger" onClick={() => setASupprimer(m)}>
-                        <Trash2 aria-hidden="true" className="h-4 w-4" />
-                        Supprimer
-                      </Button>
-                    </div>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
-        )}
+        {current && <>
+          <Button variant="secondaire" onClick={() => setOperation({ action: 'rename-folder' })}>Renommer le dossier</Button>
+          <Button variant="blanc" onClick={() => setOperation({ action: 'delete-folder' })}>Supprimer le dossier</Button>
+        </>}
       </div>
-
-      <GpxLibrary />
-
-      <ImportMediaModal
-        open={importOuvert}
-        onClose={() => setImportOuvert(false)}
-        onImport={(file, nom, alt) => effectuer(async () => {
-          await uploadMedia(file, nom, alt)
-          toast('Image importée dans la médiathèque.')
-          setImportOuvert(false)
-        })}
-      />
-
-      {/* Modification des métadonnées */}
-      <Modal
-        open={!!aEditer}
-        onClose={() => setAEditer(null)}
-        title="Modifier les métadonnées de l'image"
-        footer={
-          <>
-            <Button variant="blanc" onClick={() => setAEditer(null)}>
-              Annuler
-            </Button>
-            <Button
-              onClick={() => effectuer(async () => {
-                if (aEditer) {
-                  await saveMediaMetadata(aEditer.id, edition.nom.trim() || aEditer.nom, edition.alt.trim())
-                  toast('Métadonnées enregistrées : nom du fichier et texte alternatif mis à jour.')
-                  setAEditer(null)
-                }
-              })}
-            >
-              Enregistrer
-            </Button>
-          </>
-        }
-      >
-        <div className="flex flex-col gap-4">
-          <Field label="Nom du fichier" htmlFor="med-nom" required>
-            <Input id="med-nom" value={edition.nom} onChange={(e) => setEdition({ ...edition, nom: e.target.value })} />
-          </Field>
-          <Field
-            label="Texte alternatif"
-            htmlFor="med-alt"
-            required
-            hint="Décrit l'image pour les lecteurs d'écran. Obligatoire pour l'accessibilité (RGAA)."
-          >
-            <Textarea id="med-alt" value={edition.alt} onChange={(e) => setEdition({ ...edition, alt: e.target.value })} rows={3} />
-          </Field>
+      {selected.size > 0 && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-white p-3">
+        <p role="status">{selected.size} média{selected.size > 1 ? 's sélectionnés' : ' sélectionné'}</p>
+        {selected.size === 1000 && <p>Limite de 1 000 médias par déplacement atteinte.</p>}
+        <Button variant="secondaire" onClick={() => setOperation({ action: 'move', ids: [...selected] })}>Déplacer la sélection</Button>
+        <Button variant="blanc" onClick={() => setSelected(new Set())}>Annuler la sélection</Button>
+      </div>}
+      {activeId && <section aria-labelledby="media-details" className="min-w-0 rounded-2xl border border-line bg-white p-4 sm:p-6">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <h2 id="media-details" ref={heading} tabIndex={-1} className="text-xl text-forest">Détails du média</h2>
+          <Button variant="blanc" onClick={() => setActiveId(undefined)}>Fermer les détails</Button>
         </div>
-      </Modal>
-
-      {/* Remplacement du fichier */}
-      <ConfirmDialog
-        open={!!aRemplacer}
-        onClose={() => setARemplacer(null)}
-        onConfirm={() => effectuer(async () => {
-          if (aRemplacer && fichierRemplacement) {
-            await replaceMedia(aRemplacer.id, fichierRemplacement)
-            toast('Fichier remplacé : les contenus qui utilisent cette image affichent automatiquement la nouvelle version.')
-            setARemplacer(null)
-          } else if (aRemplacer) {
-            toast('Choisissez le fichier de remplacement.', 'erreur')
-          }
-        })}
-        title="Remplacer le fichier de cette image ?"
-        confirmLabel="Remplacer le fichier"
-        destructive={false}
-      >
-        <p>
-          L'image « {aRemplacer?.nom} » est utilisée à{' '}
-          <strong>
-            {aRemplacer ? totalUsages(aRemplacer.id) : 0}{' '}
-            endroit(s)
-          </strong>
-          . Le remplacement met à jour tous ces endroits automatiquement (l'identifiant de
-          l'image est conservé).
-        </p>
-        <Field label="Fichier de remplacement" htmlFor="remplacement-image" hint="JPEG, PNG ou WebP. 8 Mio maximum.">
-          <input id="remplacement-image" type="file" accept="image/jpeg,image/png,image/webp"
-            onChange={event => setFichierRemplacement(event.target.files?.[0] ?? null)}
-            className="mt-2 w-full rounded-xl border border-line bg-white p-3" />
-        </Field>
-      </ConfirmDialog>
-
-      {/* Suppression avec vérification d'usage (§36) */}
-      <ConfirmDialog
-        open={!!aSupprimer}
-        onClose={() => setASupprimer(null)}
-        onConfirm={() => effectuer(async () => {
-          if (aSupprimer && !utilise) {
-            await removeMedia(aSupprimer.id)
-            toast('Image supprimée de la médiathèque.', 'info')
-          }
-          setASupprimer(null)
-        })}
-        title="Supprimer cette image ?"
-        confirmLabel="Supprimer l'image"
-      >
-        {utilise && usage ? (
-          <p className="font-bold text-brique">
-            Suppression impossible : cette image est encore utilisée ({usage.articles.length}{' '}
-            article(s)
-            {usage.association ? ', page « L\'association »' : ''}
-            {usage.avatars ? `, ${usage.avatars} avatar(s)` : ''}), notamment «{' '}
-            {usage.articles[0] ?? 'contenus existants'} ». Remplacez d'abord
-            ces usages ou choisissez « Remplacer le fichier ».
-          </p>
-        ) : (
-          <p>
-            L'image « {aSupprimer?.nom} » n'est utilisée nulle part : elle sera supprimée
-            définitivement de la médiathèque.
-          </p>
-        )}
-      </ConfirmDialog>
-    </>
-  )
+        {details.error ? <Alert kind="erreur" title="Détails indisponibles">
+          <p>{details.error}</p><Button variant="secondaire" onClick={() => void details.refresh()}>Réessayer</Button>
+        </Alert> : !item ? <p role="status">Chargement des détails…</p> : <div className="grid min-w-0 gap-5 sm:grid-cols-2">
+          {item.type === 'IMAGE'
+            ? <ContentImage src={item.file} alt={item.alt} className="max-h-64 w-full rounded-xl bg-sand object-contain" />
+            : <div className="grid min-h-24 place-items-center rounded-xl bg-sand">
+                <Route aria-hidden="true" className="h-12 w-12 text-forest" />
+              </div>}
+          <div className="min-w-0">
+            <h3 className="break-all font-bold">{item.nom}</h3>
+            <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
+              <dt>Type</dt><dd>{item.type === 'IMAGE' ? `Image · ${item.format}` : 'Parcours GPX'}</dd>
+              <dt>Taille</dt><dd>{formatTaille(item.tailleKo)}</dd>
+              <dt>Ajout</dt><dd>{formatDate(item.createdAt)}</dd>
+              <dt>Dossier</dt><dd className="break-all">{item.folderId ? folderPath(library.byId, item.folderId).map(folder => folder.name).join(' / ') || 'Dossier indisponible' : folderName}</dd>
+              {item.type === 'IMAGE' && item.largeur > 0 && item.hauteur > 0 && <>
+                <dt>Dimensions</dt><dd>{item.largeur} × {item.hauteur} px</dd>
+              </>}
+              {item.type === 'IMAGE' && item.alt && <><dt>Texte alternatif</dt><dd className="break-words">{item.alt}</dd></>}
+              <dt>Utilisation</dt><dd className="break-words">{!used ? 'Aucune référence détectée' : [
+                item.usage.articles.length ? `Articles : ${item.usage.articles.join(', ')}` : '',
+                item.usage.association ? 'Page L’association' : '',
+                item.usage.avatars ? `${item.usage.avatars} avatar(s)` : '',
+                item.usage.trails ? `${item.usage.trails} référence(s) de randonnée` : '',
+              ].filter(Boolean).join(' · ')}</dd>
+            </dl>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button variant="secondaire" size="petit" onClick={() => setOperation({ action: 'edit' })}>Modifier</Button>
+              <Button variant="secondaire" size="petit" onClick={() => setOperation({ action: 'move', ids: [item.id] })}>Déplacer</Button>
+              {item.type === 'IMAGE' && <Button variant="secondaire" size="petit" onClick={() => setOperation({ action: 'replace' })}>Remplacer le fichier</Button>}
+              <Button variant="danger" size="petit" disabled={used} onClick={() => setOperation({ action: 'delete' })}>Supprimer</Button>
+            </div>
+            {used && <p className="mt-2 text-sm text-mist">Ce média est utilisé. Retirez ses références avant de le supprimer.</p>}
+          </div>
+        </div>}
+      </section>}
+      <MediaLibrary library={library} activeId={activeId} selected={selected} onOpen={openItem} onToggle={toggle} />
+    </div>
+    {operation && <MediaAction operation={operation} library={library} item={item}
+      onDone={afterWrite} onClose={() => setOperation(undefined)} />}
+  </>
 }
 
-/** Fenêtre d'import : fichier réel (aperçu en session) ou visuel de démonstration */
-function GpxLibrary() {
-  const { data, error, refresh } = useResource<GpxMedia[]>('/admin/content/gpx', true)
-  const effectuer = useContentAction()
-  const { toast } = useToast()
-  const [selected, setSelected] = useState<GpxMedia | null>(null)
-  return (
-    <section aria-labelledby="titre-mediatheque-gpx" className="mx-auto max-w-6xl px-4 pb-8 md:px-8">
-      <h2 id="titre-mediatheque-gpx" className="text-xl text-forest">Fichiers GPX</h2>
-      {error ? <Alert kind="erreur" title="Fichiers GPX indisponibles">{error}</Alert>
-        : !data ? <p role="status">Chargement…</p>
-        : !data.length ? <p className="mt-2 text-mist">Aucun fichier GPX. Importez un fichier depuis l’éditeur d’article.</p>
-        : <ul className="mt-3 grid gap-2">{data.map(file => (
-          <li key={file.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-white p-3">
-            <div><p className="font-bold [overflow-wrap:anywhere]">{file.nom}</p>
-              <p className="text-sm text-mist">{formatTaille(file.tailleKo)} · {file.usages} parcours</p></div>
-            <Button size="petit" variant="danger" disabled={file.usages > 0} onClick={() => setSelected(file)}>
-              <Trash2 aria-hidden="true" className="h-4 w-4" /> Supprimer<span className="sr-only"> {file.nom}</span>
-            </Button>
-          </li>
-        ))}</ul>}
-      <ConfirmDialog open={Boolean(selected)} onClose={() => setSelected(null)} title="Supprimer ce fichier GPX ?"
-        confirmLabel="Supprimer le fichier" onConfirm={() => effectuer(async () => {
-          if (!selected) return
-          await removeMedia(selected.id)
-          await refresh()
-          setSelected(null)
-          toast('Fichier GPX supprimé.', 'info')
-        })}>
-        <p>Le fichier « {selected?.nom} » sera supprimé définitivement.</p>
-      </ConfirmDialog>
-    </section>
-  )
+type ImportEntry = { file: File; name: string; alt: string; gpx: boolean; done?: boolean; error?: string }
+
+function ImportPreview({ file }: { file: File }) {
+  const [url, setUrl] = useState<string>()
+  useEffect(() => {
+    const nextUrl = URL.createObjectURL(file)
+    setUrl(nextUrl)
+    return () => URL.revokeObjectURL(nextUrl)
+  }, [file])
+  return <img src={url} alt="" loading="lazy" className="h-20 w-28 rounded-lg bg-sand object-contain" />
 }
 
-function ImportMediaModal({
-  open,
-  onClose,
-  onImport,
-}: {
-  open: boolean
+function MediaAction({ operation, library, item, onClose, onDone }: {
+  operation: { action: Action; ids?: string[] }
+  library: ReturnType<typeof useMediaLibrary>
+  item?: LibraryDetails
   onClose: () => void
-  onImport: (image: File, nom: string, alt: string) => Promise<void>
+  onDone: (action: Action, ids?: string[]) => Promise<void>
 }) {
-  const [fichier, setFichier] = useState<File | null>(null)
-  const [nom, setNom] = useState('')
-  const [alt, setAlt] = useState('')
-  const [erreur, setErreur] = useState('')
-  const [apercu, setApercu] = useState<string>()
-  useEffect(() => {
-    if (!fichier) { setApercu(undefined); return }
-    const url = URL.createObjectURL(fichier)
-    setApercu(url)
-    return () => URL.revokeObjectURL(url)
-  }, [fichier])
-  useEffect(() => {
-    if (open) return
-    setFichier(null)
-    setNom('')
-    setAlt('')
-    setErreur('')
-  }, [open])
+  const { action, ids } = operation
+  const [folder] = useState(library.current)
+  const [name, setName] = useState((action === 'edit' ? item?.nom : action === 'rename-folder' ? folder?.name : '') ?? '')
+  const [alt, setAlt] = useState(item?.type === 'IMAGE' ? item.alt : '')
+  const [destination, setDestination] = useState(item?.folderId && ids?.length === 1 ? item.folderId : '')
+  const [file, setFile] = useState<File>()
+  const [imports, setImports] = useState<ImportEntry[]>([])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const destructive = action === 'delete' || action === 'delete-folder'
 
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Importer une image"
-      footer={
-        <>
-          <Button variant="blanc" onClick={onClose}>
-            Annuler
-          </Button>
-          <Button
-            onClick={() => {
-              if (!fichier) {
-                setErreur("Choisissez d'abord un fichier image.")
-                return
-              }
-              if (!alt.trim()) {
-                setErreur('Le texte alternatif est obligatoire pour l\'accessibilité.')
-                return
-              }
-              setErreur('')
-              void onImport(fichier, nom.trim() || fichier.name, alt.trim())
-            }}
-          >
-            Importer
-          </Button>
-          </>
+  async function uploadEntries() {
+    const failed = imports.find(entry => !entry.done && !entry.gpx && !entry.alt.trim())
+    if (failed) {
+      setError(`Renseignez le texte alternatif de « ${failed.file.name} ».`)
+      return false
+    }
+    let failures = 0
+    for (const [index, entry] of imports.entries()) {
+      if (entry.done) continue
+      try {
+        if (entry.gpx) {
+          const form = new FormData()
+          form.set('file', entry.file)
+          await protectedRequest(`${libraryUrl}/gpx${folder ? `?folderId=${folder.id}` : ''}`, 'POST', form)
+        } else {
+          await uploadMedia(entry.file, entry.name.trim() || entry.file.name, entry.alt.trim(), folder?.id)
         }
-      >
-        <div className="flex flex-col gap-4">
-          {erreur ? (
-            <p role="alert" className="rounded-lg bg-brique-pale px-3 py-2 font-bold text-brique">
-              {erreur}
-            </p>
-          ) : null}
-          <Field
-            label="Fichier image"
-            htmlFor="import-fichier"
-            required
-            hint={`Formats acceptés : ${FORMATS_ACCEPTES}. 8 Mio maximum.`}
-          >
-            <input
-              id="import-fichier"
-              type="file"
-              accept="image/jpeg, image/png, image/webp"
-              onChange={(e) => setFichier(e.target.files?.[0] ?? null)}
-              className="w-full rounded-xl border border-line bg-white p-3 text-[1rem]"
-            />
+        setImports(entries => entries.map((value, i) => i === index ? { ...value, done: true, error: undefined } : value))
+      } catch (reason) {
+        failures += 1
+        setImports(entries => entries.map((value, i) => i === index ? { ...value, error: authErrorMessage(reason) } : value))
+      }
+    }
+    if (failures) {
+      setError(`${failures} fichier(s) en échec. Corrigez les erreurs puis relancez l’import.`)
+      await library.results.refresh()
+    }
+    return failures === 0
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try {
+      switch (action) {
+        case 'import':
+          if (!await uploadEntries()) return
+          break
+        case 'create-folder':
+          await protectedRequest(`${libraryUrl}/media-folders`, 'POST', { nom: name.trim(), parentId: folder?.id })
+          break
+        case 'rename-folder':
+          await protectedRequest(`${libraryUrl}/media-folders/${folder?.id}`, 'PATCH', { nom: name.trim() })
+          break
+        case 'delete-folder':
+          await protectedRequest(`${libraryUrl}/media-folders/${folder?.id}`, 'DELETE', { confirmed: true })
+          break
+        case 'move':
+          await protectedRequest(`${libraryUrl}/media/move`, 'PATCH', { ids, folderId: destination || null })
+          break
+        case 'edit':
+          if (item) await saveMediaMetadata(item.id, name.trim(), alt.trim())
+          break
+        case 'replace':
+          if (item && file) await replaceMedia(item.id, file)
+          break
+        case 'delete':
+          if (item) await removeMedia(item.id)
+          break
+      }
+      await onDone(action, ids)
+    } catch (reason) {
+      setError(reason instanceof ApiError && reason.status === 409 && action === 'delete'
+        ? 'Ce média est désormais utilisé. Retirez ses références avant de réessayer.'
+        : authErrorMessage(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <Modal open onClose={() => { if (!busy) onClose() }} title={titles[action]} preventClose={busy}>
+    <form onSubmit={submit}>
+      {error && <Alert kind="erreur" title="Action incomplète">{error}</Alert>}
+      <fieldset disabled={busy} aria-busy={busy} className="mt-3 flex min-w-0 flex-col gap-4">
+        <legend className="sr-only">{titles[action]}</legend>
+        {action === 'import' && <>
+          <Field label="Fichiers à importer" htmlFor="media-import" hint="JPEG, PNG et WebP, 8 Mio maximum par image. GPX, 5 Mio maximum.">
+            <Input id="media-import" type="file" multiple accept={`${imageFormats},.gpx,application/gpx+xml`}
+              onChange={event => setImports(Array.from(event.target.files ?? [], file => ({
+                file, name: file.name, alt: '', gpx: /\.gpx$/i.test(file.name) || file.type === 'application/gpx+xml',
+              })))} />
           </Field>
-          {fichier && apercu ? (
-            <img
-              src={apercu}
-              alt={`Aperçu du fichier choisi : ${fichier.name}`}
-              className="h-40 w-full rounded-xl border border-line object-cover"
-            />
-          ) : null}
-          <Field label="Nom affiché" htmlFor="import-nom" hint="Par défaut, le nom du fichier.">
-            <Input id="import-nom" value={nom} onChange={(e) => setNom(e.target.value)} placeholder={fichier?.name ?? 'nom-de-l-image.jpg'} />
+          <p className="break-words text-mist">Dossier de destination · {folder?.name ?? folderName}</p>
+          {imports.map((entry, index) => <div key={index} className="grid min-w-0 gap-3 rounded-xl border border-line p-3">
+            <p className="break-all font-bold">{entry.file.name}</p>
+            {entry.done ? <p role="status">Importé</p> : !entry.gpx && <>
+              <ImportPreview file={entry.file} />
+              <Field label="Nom affiché" htmlFor={`import-name-${index}`}>
+                <Input id={`import-name-${index}`} maxLength={255} value={entry.name}
+                  onChange={event => setImports(entries => entries.map((value, i) => i === index ? { ...value, name: event.target.value } : value))} />
+              </Field>
+              <Field label="Texte alternatif" htmlFor={`import-alt-${index}`} required>
+                <Textarea id={`import-alt-${index}`} maxLength={1000} required rows={2} value={entry.alt}
+                  onChange={event => setImports(entries => entries.map((value, i) => i === index ? { ...value, alt: event.target.value } : value))} />
+              </Field>
+            </>}
+            {entry.error && <p role="alert" className="text-brique">{entry.error}</p>}
+          </div>)}
+        </>}
+        {(action === 'edit' || action === 'create-folder' || action === 'rename-folder') && <Field
+          label={action === 'edit' ? 'Nom du fichier' : 'Nom du dossier'} htmlFor="media-name" required>
+          <Input id="media-name" required maxLength={255} value={name} onChange={event => setName(event.target.value)} />
+        </Field>}
+        {action === 'edit' && item?.type === 'IMAGE' && <Field label="Texte alternatif" htmlFor="media-alt" required>
+          <Textarea id="media-alt" required maxLength={1000} rows={3} value={alt} onChange={event => setAlt(event.target.value)} />
+        </Field>}
+        {action === 'move' && <Field label="Dossier de destination" htmlFor="media-destination" hint={`${ids?.length ?? 0} média(s) à déplacer.`}>
+          <Select id="media-destination" value={destination} onChange={event => setDestination(event.target.value)}>
+            <option value="">{folderName}</option><FolderOptions library={library} />
+          </Select>
+        </Field>}
+        {action === 'replace' && <>
+          <p>Le nouveau fichier remplacera l’image dans tous les contenus qui l’utilisent. Ses références seront conservées.</p>
+          <Field label="Nouveau fichier" htmlFor="media-replace" required hint="JPEG, PNG ou WebP. 8 Mio maximum.">
+            <Input id="media-replace" required type="file" accept={imageFormats} onChange={event => setFile(event.target.files?.[0])} />
           </Field>
-          <Field label="Texte alternatif (obligatoire)" htmlFor="import-alt" required>
-            <Textarea id="import-alt" value={alt} onChange={(e) => setAlt(e.target.value)} rows={2} />
-          </Field>
+        </>}
+        {action === 'delete-folder' && <p className="break-words">Les médias de « {folder?.name} » passeront dans « Non classés ». Ses sous-dossiers remonteront à la racine avec leur contenu.</p>}
+        {action === 'delete' && <p className="break-words">Le fichier « {item?.nom} » sera effacé définitivement.</p>}
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button variant="blanc" onClick={onClose}>Annuler</Button>
+          <Button type="submit" variant={destructive ? 'danger' : 'primaire'}
+            disabled={busy || (action === 'import' && !imports.some(entry => !entry.done)) || (action === 'replace' && !file)}>
+            {busy ? action === 'import' ? 'Import en cours…' : 'Enregistrement…' : destructive ? 'Confirmer la suppression'
+              : action === 'import' ? 'Importer' : action === 'move' ? 'Déplacer' : 'Enregistrer'}
+          </Button>
         </div>
-      </Modal>
-  )
+      </fieldset>
+    </form>
+  </Modal>
 }

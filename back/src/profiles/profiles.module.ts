@@ -89,6 +89,8 @@ class ProfilesService {
       firstName: user.profile.firstName,
       lastName: user.profile.lastName,
       avatar: presentAvatar(user.id, user.profile),
+      hasPersonalAvatar: Boolean(user.profile.avatarMediaId),
+      googleAvatar: user.googleId ? user.profile.googleAvatar : null,
       pendingEmail: user.accountTokens[0]?.newEmail ?? null,
       authMethods: [
         ...(user.passwordHash ? ['password'] : []),
@@ -134,26 +136,30 @@ class ProfilesService {
   async chooseAvatar(principal: Principal, dto: AvatarDto) {
     if (dto.kind !== 'PRESET' && dto.preset !== undefined)
       throw new BadRequestException();
-    const path = await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       await lockUser(tx, principal.userId);
       await this.sessions.assertLive(tx, principal.userId, principal.sessionId);
       const profile = await tx.profile.findUniqueOrThrow({
         where: { userId: principal.userId },
+        select: {
+          avatarMediaId: true,
+          googleAvatar: true,
+          user: { select: { googleId: true } },
+        },
       });
-      if (dto.kind === 'GOOGLE' && !profile.googleAvatar)
-        throw new BadRequestException();
+      if (dto.kind === 'PERSONAL' && !profile.avatarMediaId)
+        throw new BadRequestException('Aucune photo personnelle enregistrée.');
+      if (dto.kind === 'GOOGLE' && (!profile.googleAvatar || !profile.user.googleId))
+        throw new BadRequestException('La photo Google est indisponible.');
 
       await tx.profile.update({
         where: { userId: principal.userId },
         data: {
           avatarKind: dto.kind,
           avatarPreset: dto.kind === 'PRESET' ? String(dto.preset) : null,
-          avatarMediaId: null,
         },
       });
-      return removeAvatarRecord(tx, profile.avatarMediaId);
     });
-    await removeAvatarFile(this.config.avatarDirectory, path);
     return this.own(principal.userId);
   }
 

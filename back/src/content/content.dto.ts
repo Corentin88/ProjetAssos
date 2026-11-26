@@ -7,12 +7,16 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsInt,
   IsISO8601,
   IsNotEmpty,
   IsObject,
   IsString,
   IsUUID,
   MaxLength,
+  Max,
+  Min,
+  ArrayMinSize,
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
@@ -161,7 +165,51 @@ export class NamedDto {
 
 export class MediaDto extends NamedDto {
   @IsString()
-  @IsNotEmpty()
   @MaxLength(1000)
   alt: string;
+}
+
+export class MediaLibraryQuery {
+  @ValidateIf((_dto, value) => value !== undefined)
+  @IsString()
+  @MaxLength(255)
+  q?: string;
+
+  @ValidateIf((_dto, value) => value !== undefined)
+  @IsIn(['IMAGE', 'GPX'])
+  type?: 'IMAGE' | 'GPX';
+
+  @ValidateIf((_dto, value) => value !== undefined && value !== 'unfiled')
+  @IsUUID()
+  folder?: string;
+
+  @ValidateIf((_dto, value) => value !== undefined)
+  @IsIn(['name', 'date', 'size'])
+  sort?: 'name' | 'date' | 'size';
+
+  @ValidateIf((_dto, value) => value !== undefined)
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(1_000_000)
+  page?: number;
+}
+
+export class MediaFolderDto extends NamedDto {
+  @ValidateIf((_dto, value) => value !== undefined)
+  @IsUUID()
+  parentId?: string;
+}
+
+export class MoveMediaDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(1000)
+  @ArrayUnique()
+  @IsUUID(undefined, { each: true })
+  ids: string[];
+
+  @ValidateIf((_dto, value) => value !== null)
+  @IsUUID()
+  folderId: string | null;
 }

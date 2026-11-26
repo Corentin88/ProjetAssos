@@ -14,9 +14,10 @@ interface ModalProps {
   children: ReactNode
   footer?: ReactNode
   size?: 'normal' | 'large'
+  preventClose?: boolean
 }
 
-export function Modal({ open, onClose, title, children, footer, size = 'normal' }: ModalProps) {
+export function Modal({ open, onClose, title, children, footer, size = 'normal', preventClose = false }: ModalProps) {
   const ref = useRef<HTMLDialogElement>(null)
   const titleId = useId()
 
@@ -36,6 +37,7 @@ export function Modal({ open, onClose, title, children, footer, size = 'normal' 
       ref={ref}
       aria-labelledby={titleId}
       onClose={onClose}
+      onCancel={event => { if (preventClose) event.preventDefault() }}
       tabIndex={-1}
       className={`fixed inset-0 m-auto w-[calc(100vw-2rem)] rounded-2xl border border-line bg-white p-6 shadow-2xl backdrop:bg-bark/60 ${
         size === 'large' ? 'max-w-3xl' : 'max-w-xl'
@@ -47,6 +49,7 @@ export function Modal({ open, onClose, title, children, footer, size = 'normal' 
         </h2>
         <button
           type="button"
+          disabled={preventClose}
           onClick={onClose}
           className="rounded-lg p-2 text-mist hover:bg-sand hover:text-bark"
         >

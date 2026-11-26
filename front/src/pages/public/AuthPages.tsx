@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ArrowLeft, CheckCircle2, Eye, EyeOff, KeyRound, LogIn, Mail, UserPlus } from 'lucide-react'
 import { ApiError, authErrorMessage, login, register, requestPasswordReset, resetPassword, startGoogle, useAuthSession } from '../../lib/auth'
 import { Button, Checkbox, Field, Input, focusChampInvalide } from '../../components/ui/form'
@@ -488,15 +488,33 @@ export function MotDePasseOublie() {
 
 /** Réinitialisation (§7) : définition du nouveau mot de passe */
 export function ReinitialiserMotDePasse() {
+  const location = useLocation()
+  return <FormulaireReinitialisation key={location.key} recherche={location.search} />
+}
+
+function FormulaireReinitialisation({ recherche }: { recherche: string }) {
   const navigate = useNavigate()
-  const [params] = useSearchParams()
-  const token = params.get('token')
-  const { toast } = useToast()
+  const [token] = useState(() => new URLSearchParams(recherche).get('token'))
   const [mdp, setMdp] = useState('')
   const [confirmation, setConfirmation] = useState('')
   const [erreurs, setErreurs] = useState<Record<string, string>>({})
   const [termine, setTermine] = useState(false)
   const [enCours, setEnCours] = useState(false)
+  const [lienInvalide, setLienInvalide] = useState(!token || !/^[A-Za-z0-9_-]{43}$/.test(token))
+
+  useEffect(() => {
+    // Le jeton reste en mémoire après l’ouverture du lien.
+    if (new URLSearchParams(recherche).has('token')) {
+      const { pathname, search } = window.location
+      window.history.replaceState(window.history.state, '', `${pathname}${search}#/reinitialiser-mot-de-passe`)
+    }
+  }, [recherche])
+
+  useEffect(() => {
+    if (!termine) return
+    const timer = window.setTimeout(() => navigate('/connexion', { replace: true }), 5000)
+    return () => window.clearTimeout(timer)
+  }, [termine, navigate])
 
   return (
     <div className={CLASSE_PAGE}>
@@ -504,12 +522,21 @@ export function ReinitialiserMotDePasse() {
       {termine ? (
         <div className={CLASSE_FORMULAIRE}>
           <CheckCircle2 aria-hidden="true" className="h-12 w-12 text-leaf" />
-          <Alert kind="succes" title="Mot de passe réinitialisé">
+          <Alert kind="succes" title="Mot de passe modifié">
             <p>
-              Vous pouvez vous reconnecter avec votre nouveau mot de passe.
+              Vous allez être redirigé vers la connexion dans quelques secondes.
             </p>
           </Alert>
-          <Button onClick={() => navigate('/connexion')}>Aller à la connexion</Button>
+          <Button autoFocus onClick={() => navigate('/connexion', { replace: true })}>Aller à la connexion</Button>
+        </div>
+      ) : lienInvalide ? (
+        <div className={CLASSE_FORMULAIRE}>
+          <Alert kind="attention" title="Lien de réinitialisation inutilisable">
+            Ce lien est invalide, a expiré ou a déjà été utilisé.
+          </Alert>
+          <Link to="/mot-de-passe-oublie" className="font-bold text-forest underline">
+            Demander un nouveau lien
+          </Link>
         </div>
       ) : (
         <form
@@ -530,10 +557,12 @@ export function ReinitialiserMotDePasse() {
             setErreurs({})
             try {
               await resetPassword(token, mdp, confirmation)
+              setMdp('')
+              setConfirmation('')
               setTermine(true)
-              toast('Votre mot de passe a été réinitialisé.')
             } catch (error) {
-              setErreurs({ formulaire: authErrorMessage(error) })
+              if (error instanceof ApiError && error.status === 400) setLienInvalide(true)
+              else setErreurs({ formulaire: authErrorMessage(error) })
             } finally {
               setEnCours(false)
             }
@@ -542,17 +571,21 @@ export function ReinitialiserMotDePasse() {
           aria-label="Définition du nouveau mot de passe"
         >
           <p className="text-mist">
-            Le nouveau mot de passe doit contenir entre 12 et 128 caractères.
+            Choisissez un nouveau mot de passe, puis saisissez-le une seconde fois pour le confirmer.
           </p>
-          {!token ? <Alert kind="attention" title="Lien nécessaire">Ouvrez le lien reçu par e-mail pour continuer.</Alert> : null}
           {erreurs.formulaire ? <Alert kind="erreur" title="Réinitialisation impossible">{erreurs.formulaire}</Alert> : null}
-          <Field label="Nouveau mot de passe" htmlFor="r-mdp" required error={erreurs.mdp}>
-            <Input id="r-mdp" type="password" value={mdp} onChange={(e) => { setMdp(e.target.value); setErreurs((er) => ({ ...er, mdp: '' })) }} invalid={!!erreurs.mdp} describedBy={erreurs.mdp ? 'r-mdp-err' : undefined} autoComplete="new-password" />
-          </Field>
-          <Field label="Confirmer le nouveau mot de passe" htmlFor="r-mdp2" required error={erreurs.confirmation}>
-            <Input id="r-mdp2" type="password" value={confirmation} onChange={(e) => { setConfirmation(e.target.value); setErreurs((er) => ({ ...er, confirmation: '' })) }} invalid={!!erreurs.confirmation} describedBy={erreurs.confirmation ? 'r-mdp2-err' : undefined} autoComplete="new-password" />
-          </Field>
-          <Button type="submit" disabled={!token || enCours}>Enregistrer le nouveau mot de passe</Button>
+          <fieldset className="flex flex-col gap-4" disabled={enCours} aria-busy={enCours}>
+            <legend className="sr-only">Nouveau mot de passe et confirmation</legend>
+            <ChampMotDePasse id="r-mdp" label="Nouveau mot de passe" value={mdp} erreur={erreurs.mdp}
+              aide="Entre 12 et 128 caractères." autoComplete="new-password"
+              onChange={value => { setMdp(value); setErreurs(er => ({ ...er, mdp: '' })) }} />
+            <ChampMotDePasse id="r-mdp2" label="Confirmer le nouveau mot de passe" value={confirmation}
+              erreur={erreurs.confirmation} autoComplete="new-password"
+              onChange={value => { setConfirmation(value); setErreurs(er => ({ ...er, confirmation: '' })) }} />
+            <Button type="submit" disabled={enCours}>
+              {enCours ? 'Enregistrement en cours…' : 'Enregistrer le nouveau mot de passe'}
+            </Button>
+          </fieldset>
         </form>
       )}
     </div>

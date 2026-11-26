@@ -195,7 +195,7 @@ export class AuthController {
 
   @Get('link/:kind')
   link(@Param('kind') kind: string, @Res() response: Response) {
-    sendLinkPage(response, kind);
+    sendLinkPage(response, kind, this.frontOrigin);
   }
 
   @Post('google/start')

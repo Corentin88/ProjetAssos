@@ -18,11 +18,10 @@ import {
   Trash2,
   Youtube,
 } from 'lucide-react'
-import type { Block, BlockType, GpxMedia, Media } from '../../types'
+import type { Block, BlockType } from '../../types'
 import { newBlockId } from '../../data/articles'
 import { getMedia } from '../../lib/selectors'
 import { mediaUrl } from '../../lib/assets'
-import { useResource } from '../../lib/community'
 import { defaultTrailVisibility, emptyLocation, emptyTrail } from '../../lib/mapBlocks'
 import { youtubeId } from '../content/BlockRenderer'
 import { Button, Field, Input, Textarea } from '../ui/form'
@@ -49,14 +48,12 @@ const LIBELLES: Record<BlockType, { nom: string; icone: typeof Text; hint: strin
 export function BlockEditor({
   blocks,
   onChange,
-  medias,
   errors,
   article = false,
   onTrailBusy,
 }: {
   blocks: Block[]
   onChange: Dispatch<SetStateAction<Block[]>>
-  medias?: Media[]
   errors?: Record<string, string>
   article?: boolean
   onTrailBusy?: (id: string, busy: boolean) => void
@@ -64,9 +61,6 @@ export function BlockEditor({
   const [menuOuvert, setMenuOuvert] = useState(false)
   const [aSupprimer, setASupprimer] = useState<number | null>(null)
   const [pickerIndex, setPickerIndex] = useState<number | null>(null)
-  const { data: gpxFiles, error: gpxError, refresh: refreshGpx } = useResource<GpxMedia[]>(
-    article && blocks.some(block => block.type === 'randonnee') ? '/admin/content/gpx' : undefined, true,
-  )
 
   const ajouter = (type: BlockType) => {
     const base: Block = { id: newBlockId('nvx'), type }
@@ -208,13 +202,12 @@ export function BlockEditor({
       </ConfirmDialog>
 
       <MediaPicker
-        sources={medias}
         open={pickerIndex !== null}
         onClose={() => setPickerIndex(null)}
         titre="Choisir l'image du bloc"
         selectionActive={pickerIndex !== null ? blocks[pickerIndex]?.mediaId ?? null : null}
         onChoose={(media) => {
-          if (pickerIndex !== null) {
+          if (pickerIndex !== null && media.type === 'IMAGE') {
             majBloc(pickerIndex, { mediaId: media.id, alt: media.alt })
           }
         }}
@@ -225,7 +218,7 @@ export function BlockEditor({
   function renderChamp(b: Block, index: number) {
     switch (b.type) {
       case 'randonnee':
-        return <TrailEditor block={b} files={gpxFiles} filesError={gpxError} refresh={() => void refreshGpx()}
+        return <TrailEditor block={b}
           onChange={patch => onChange(current => current.map(block => block.id === b.id ? { ...block, ...patch } : block))}
           onBusy={onTrailBusy} errors={errors} />
       case 'localisation':

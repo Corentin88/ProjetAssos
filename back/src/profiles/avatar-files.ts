@@ -36,7 +36,7 @@ export async function removeAvatarRecord(
 ) {
   if (!id) return undefined;
   const result = await tx.media.deleteMany({
-    where: { id, path: avatarPath(id) },
+    where: { id, path: avatarPath(id), profiles: { none: {} } },
   });
   return result.count ? avatarPath(id) : undefined;
 }

@@ -91,12 +91,12 @@ export function deleteClassification(kind: 'categories' | 'tags', id: string) {
   return mutate(`/classification/${kind}/${id}`, 'DELETE', { confirmed: true })
 }
 
-export function uploadMedia(image: File, nom: string, alt: string) {
+export function uploadMedia(image: File, nom: string, alt: string, folderId?: string) {
   const form = new FormData()
   form.set('image', image)
   form.set('nom', nom)
   form.set('alt', alt)
-  return mutate('/media', 'POST', form)
+  return protectedRequest(`/admin/content/media${folderId ? `?folderId=${folderId}` : ''}`, 'POST', form)
 }
 
 export function replaceMedia(id: string, image: File) {

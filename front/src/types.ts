@@ -34,6 +34,8 @@ export interface User {
   role: Role
   statut: UserStatus
   avatar: Avatar
+  hasPersonalAvatar?: boolean
+  googleAvatar?: string
   authMethods: AuthMethod[]
   createdAt: string
   lastActivityAt: string
@@ -128,13 +130,6 @@ export interface TrailFields {
   elevationLoss: number
   duration: number
   difficulty: 'EASY' | 'MEDIUM' | 'HARD'
-}
-
-export interface GpxMedia {
-  id: string
-  nom: string
-  tailleKo: number
-  usages: number
 }
 
 export interface Trail extends TrailFields {
@@ -244,6 +239,26 @@ export interface Media {
   hauteur: number
   createdAt: string
   usage?: { articles: string[]; avatars: number; association: boolean }
+}
+
+interface LibraryItemFields {
+  id: string
+  nom: string
+  createdAt: string
+  tailleKo: number
+  folderId: string | null
+}
+
+export type LibraryImage = Media & LibraryItemFields & { type: 'IMAGE'; thumbnail: string }
+export type LibraryItem = LibraryImage | (LibraryItemFields & { type: 'GPX' })
+export type LibraryDetails = LibraryItem & {
+  usage: { articles: string[]; avatars: number; association: boolean; trails: number }
+}
+
+export interface MediaFolder {
+  id: string
+  name: string
+  parentId: string | null
 }
 
 export interface ContactMessage {

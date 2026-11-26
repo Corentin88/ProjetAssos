@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { useEffect, useState } from 'react'
+import type { ReactElement } from 'react'
 import { AVATAR_COLORS } from '../../data/users'
 import { getMedia } from '../../lib/selectors'
 import { mediaUrl } from '../../lib/assets'
@@ -23,44 +24,52 @@ export function Avatar({
     size === 'lg' ? 'h-20 w-20 text-2xl' : size === 'sm' ? 'h-10 w-10 text-base' : 'h-14 w-14 text-xl'
   // Priorité d'affichage : image personnelle > avatar prédéfini > photo Google > avatar par défaut (§13.2).
   const media = user.avatar.type === 'image' && user.avatar.mediaId ? getMedia(user.avatar.mediaId) : undefined
-  const chemin = user.avatar.type === 'image' ? user.avatar.url : undefined
-  const [image, setImage] = useState<{ chemin: string; url: string }>()
+  const lettres = `${user.prenom.charAt(0)}${user.nom.charAt(0)}`.toUpperCase()
+  const couleur = user.avatar.type === 'initiales' ? AVATAR_COLORS[user.avatar.colorIndex ?? 0] : undefined
+  const classes = `${dims} shrink-0 rounded-full ${className}`
+  const fallback = (
+    <span aria-hidden="true" style={couleur ? { backgroundColor: couleur } : undefined}
+      className={`${classes} bg-leaf flex items-center justify-center font-bold text-white`}>
+      {lettres}
+    </span>
+  )
+  if (user.avatar.type === 'image' && !media && user.avatar.url) {
+    return <PrivateAvatarPhoto key={user.avatar.url} path={user.avatar.url} classes={classes} fallback={fallback} />
+  }
+  const source = media ? mediaUrl(media.file) : user.avatar.type === 'google' ? user.avatar.url : undefined
+  return source ? <AvatarPhoto key={source} src={source} classes={classes} fallback={fallback} /> : fallback
+}
+
+type PhotoProps = { classes: string; fallback: ReactElement }
+
+function PrivateAvatarPhoto({ path, classes, fallback }: PhotoProps & { path: string }) {
+  const [source, setSource] = useState<string>()
   useEffect(() => {
-    if (!chemin) return
     const controller = new AbortController()
     let url: string | undefined
-    void fetchAvatar(chemin, controller.signal).then((blob) => {
+    void fetchAvatar(path, controller.signal).then((blob) => {
       if (controller.signal.aborted) return
       url = URL.createObjectURL(blob)
-      setImage({ chemin, url })
+      setSource(url)
     }).catch(() => {})
     return () => {
       controller.abort()
       if (url) URL.revokeObjectURL(url)
     }
-  }, [chemin])
-  const source = media ? mediaUrl(media.file)
-    : user.avatar.type === 'google' ? user.avatar.url
-    : image?.chemin === chemin ? image?.url : undefined
-  if (source) {
-    return (
-      <img
-        src={source}
-        alt=""
-        className={`${dims} shrink-0 rounded-full border border-line object-cover ${className}`}
-      />
-    )
-  }
-  const lettres = `${user.prenom.charAt(0)}${user.nom.charAt(0)}`.toUpperCase()
-  const colorIndex = user.avatar.colorIndex ?? 0
-  const bg =
-    user.avatar.type === 'defaut' ? 'bg-leaf' : AVATAR_COLORS[colorIndex % AVATAR_COLORS.length]
+  }, [path])
+  return source ? <AvatarPhoto src={source} classes={classes} fallback={fallback} /> : fallback
+}
+
+function AvatarPhoto({ src, classes, fallback }: PhotoProps & { src: string }) {
+  const [loadedSource, setLoadedSource] = useState<string>()
+  const ready = loadedSource === src
   return (
-    <span
-      aria-hidden="true"
-      className={`${dims} ${bg} flex shrink-0 items-center justify-center rounded-full font-bold text-white ${className}`}
-    >
-      {lettres}
+    <span className="relative inline-grid shrink-0">
+      {!ready && fallback}
+      <img key={src} src={src} alt="" referrerPolicy="no-referrer"
+        onLoad={() => setLoadedSource(src)}
+        onError={() => setLoadedSource(undefined)}
+        className={`${classes} border border-line object-cover ${ready ? '' : 'absolute inset-0 invisible'}`} />
     </span>
   )
 }

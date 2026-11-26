@@ -11,6 +11,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   StreamableFile,
   UploadedFile,
   UseGuards,
@@ -36,6 +37,9 @@ import {
   ArticleDto,
   CarouselDto,
   MediaDto,
+  MediaFolderDto,
+  MediaLibraryQuery,
+  MoveMediaDto,
   NamedDto,
 } from './content.dto.js';
 import { contentLog, contentSlug, lockAdmin } from './content.shared.js';
@@ -253,6 +257,50 @@ class AdminContentController {
     });
   }
 
+  @Get('media')
+  browseMedia(@Query() query: MediaLibraryQuery) {
+    return this.media.browse(query);
+  }
+
+  @Get('media-folders')
+  mediaFolders() {
+    return this.media.folders();
+  }
+
+  @Post('media-folders')
+  createMediaFolder(@CurrentUser() actor: Principal, @Body() dto: MediaFolderDto) {
+    return this.media.createFolder(actor, dto);
+  }
+
+  @Patch('media-folders/:id')
+  @HttpCode(204)
+  renameMediaFolder(@CurrentUser() actor: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: NamedDto) {
+    return this.media.renameFolder(actor, id, dto);
+  }
+
+  @Delete('media-folders/:id')
+  @HttpCode(204)
+  deleteMediaFolder(@CurrentUser() actor: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ConfirmDto) {
+    return this.media.deleteFolder(actor, id, dto.confirmed);
+  }
+
+  @Patch('media/move')
+  @HttpCode(204)
+  moveMedia(@CurrentUser() actor: Principal, @Body() dto: MoveMediaDto) {
+    return this.media.move(actor, dto);
+  }
+
+  @Get('media/:id')
+  mediaDetails(@Param('id', ParseUUIDPipe) id: string) {
+    return this.media.details(id);
+  }
+
+  @Get('media/:id/thumbnail')
+  async thumbnail(@Param('id', ParseUUIDPipe) id: string) {
+    const file = await this.media.file(id, true, true);
+    return new StreamableFile(file.data, { type: file.mime });
+  }
+
   @Get('media/:id/file')
   async image(@Param('id', ParseUUIDPipe) id: string) {
     const file = await this.media.file(id, true);
@@ -266,8 +314,9 @@ class AdminContentController {
     @CurrentUser() actor: Principal,
     @UploadedFile() file: { buffer: Buffer },
     @Body() dto: MediaDto,
+    @Query('folderId', new ParseUUIDPipe({ optional: true })) folderId?: string,
   ) {
-    return this.media.write(actor, file?.buffer, dto);
+    return this.media.write(actor, file?.buffer, dto, undefined, folderId);
   }
 
   @Get('gpx')
@@ -298,8 +347,9 @@ class AdminContentController {
   uploadGpx(
     @CurrentUser() actor: Principal,
     @UploadedFile() file?: { buffer: Buffer; originalname: string },
+    @Query('folderId', new ParseUUIDPipe({ optional: true })) folderId?: string,
   ) {
-    return this.trails.upload(actor, file?.buffer, file?.originalname);
+    return this.trails.upload(actor, file?.buffer, file?.originalname, folderId);
   }
 
   @Patch('media/:id')

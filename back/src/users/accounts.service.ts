@@ -19,7 +19,7 @@ import type {
   InviteDto,
 } from '../auth/auth.dto.js';
 import { hashPassword } from '../auth/auth.service.js';
-import { AccountLinksService } from '../auth/account-links.service.js';
+import { accountLinkMinutes, AccountLinksService } from '../auth/account-links.service.js';
 import {
   lockUser,
   opaqueToken,
@@ -75,7 +75,6 @@ function presentAccount(
   };
 }
 
-const minutes = { INVITATION: 1440, PASSWORD_RESET: 30, EMAIL_CHANGE: 60 };
 
 @Injectable()
 export class AccountsService {
@@ -528,7 +527,7 @@ export class AccountsService {
         purpose,
         tokenHash: tokenHash(token),
         newEmail,
-        expiresAt: new Date(now.getTime() + minutes[purpose] * 60_000),
+        expiresAt: new Date(now.getTime() + accountLinkMinutes[purpose] * 60_000),
       },
     });
     return token;

@@ -10,12 +10,19 @@ import {
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
 import sharp from 'sharp';
-import type { Media, Prisma } from '../../generated/prisma/client.js';
+import { Prisma } from '../../generated/prisma/client.js';
+import type { Media } from '../../generated/prisma/client.js';
 import { SessionService } from '../auth/session.service.js';
 import type { Principal } from '../auth/session.service.js';
 import { PrismaService } from '../prisma/prisma.module.js';
-import { MediaDto } from './content.dto.js';
-import { contentLog, lockAdmin } from './content.shared.js';
+import type {
+  MediaDto,
+  MediaFolderDto,
+  MediaLibraryQuery,
+  MoveMediaDto,
+  NamedDto,
+} from './content.dto.js';
+import { contentLog, lockAdmin, lockMediaFolder } from './content.shared.js';
 import { imageFormat } from './image-format.js';
 import { gpxBlockUsage, gpxLibrary, gpxPath } from './trails.js';
 
@@ -35,6 +42,20 @@ const publiclyUsed = {
     { associationBlocks: { some: {} } },
   ],
 } satisfies Prisma.MediaWhereInput;
+const adminUsed = {
+  OR: [
+    { articleCovers: { some: {} } },
+    { articleBlocks: { some: {} } },
+    { associationBlocks: { some: {} } },
+  ],
+} satisfies Prisma.MediaWhereInput;
+const libraryTypes = [library, gpxLibrary];
+const pageSize = 24;
+const sortOrder = {
+  name: { name: 'asc' },
+  date: { createdAt: 'desc' },
+  size: { sizeBytes: 'desc' },
+} satisfies Record<string, Prisma.MediaOrderByWithRelationInput>;
 const formats = {
   jpeg: { db: 'JPEG', display: 'JPG', mime: 'image/jpeg' },
   png: { db: 'PNG', display: 'PNG', mime: 'image/png' },
@@ -51,47 +72,160 @@ export class MediaService {
   ) {}
 
   async list(admin: boolean, db: Prisma.TransactionClient) {
-    if (!admin) {
-      const items = await db.media.findMany({
-        where: { ...library, ...publiclyUsed },
-      });
-      return Promise.all(items.map((item) => this.present(item, false)));
-    }
     const items = await db.media.findMany({
-      where: library,
-      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+      // L’instantané de contenu ne transporte que les références utiles au rendu.
+      where: { ...library, ...(admin ? adminUsed : publiclyUsed) },
+    });
+    return items.map((item) => this.present(item, admin));
+  }
+
+  async browse(query: MediaLibraryQuery) {
+    const page = query.page ?? 1;
+    const search = query.q?.trim().replace(/[\\%_]/g, '\\$&');
+    const matches = { contains: search, mode: 'insensitive' } as const;
+    const where: Prisma.MediaWhereInput = {
+      AND: [
+        {
+          OR:
+            query.type === 'IMAGE'
+              ? [library]
+              : query.type === 'GPX'
+                ? [gpxLibrary]
+                : libraryTypes,
+        },
+        ...(search ? [{ OR: [{ name: matches }, { altText: matches }] }] : []),
+        ...(query.folder
+          ? [{ folderId: query.folder === 'unfiled' ? null : query.folder }]
+          : []),
+      ],
+    };
+    return this.prisma.$transaction(
+      async (tx) => {
+        const total = await tx.media.count({ where });
+        const items = await tx.media.findMany({
+          where,
+          orderBy: [sortOrder[query.sort ?? 'date'], { id: 'asc' }],
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+        });
+        return {
+          total,
+          pageSize,
+          items: items.map((item) => this.presentLibraryItem(item)),
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
+  }
+
+  async details(id: string) {
+    const item = await this.prisma.media.findFirst({
+      where: { id, OR: libraryTypes },
       include: {
-        _count: { select: { profiles: true, associationBlocks: true } },
+        _count: {
+          select: { profiles: true, associationBlocks: true, trails: true },
+        },
         articleCovers: { select: { articleId: true, title: true } },
         articleBlocks: {
           select: { version: { select: { articleId: true, title: true } } },
         },
       },
     });
-    return Promise.all(
-      items.map(async (item) => {
-        const base = await this.present(item, true);
-        const versions = [
-          ...item.articleCovers,
-          ...item.articleBlocks.map((block) => block.version),
-        ];
-        return {
-          ...base,
-          usage: {
-            articles: [
-              ...new Map(
-                versions.map((version) => [version.articleId, version.title]),
-              ).values(),
-            ],
-            avatars: item._count.profiles,
-            association: Boolean(item._count.associationBlocks),
-          },
-        };
-      }),
-    );
+    if (!item) throw new NotFoundException();
+    const versions = [
+      ...item.articleCovers,
+      ...item.articleBlocks.map((block) => block.version),
+    ];
+    const metadata =
+      item.type === 'IMAGE'
+        ? await sharp(this.resolve(item.path))
+            .metadata()
+            .catch(() => null)
+        : null;
+    const trails =
+      item.type === 'GPX'
+        ? item._count.trails + (await gpxBlockUsage(this.prisma, id))
+        : 0;
+    return {
+      ...this.presentLibraryItem(item),
+      largeur: metadata?.width ?? 0,
+      hauteur: metadata?.height ?? 0,
+      usage: {
+        articles: [
+          ...new Map(
+            versions.map((version) => [version.articleId, version.title]),
+          ).values(),
+        ],
+        avatars: item._count.profiles,
+        association: Boolean(item._count.associationBlocks),
+        trails,
+      },
+    };
   }
 
-  async file(id: string, admin: boolean) {
+  folders() {
+    return this.prisma.mediaFolder.findMany({
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    });
+  }
+
+  createFolder(actor: Principal, dto: MediaFolderDto) {
+    const name = dto.nom.trim();
+    if (!name) throw new BadRequestException('Saisissez un nom de dossier.');
+    return this.prisma.$transaction(async (tx) => {
+      await lockAdmin(tx, this.sessions, actor);
+      await lockMediaFolder(tx, dto.parentId);
+      return tx.mediaFolder.create({ data: { name, parentId: dto.parentId } });
+    });
+  }
+
+  renameFolder(actor: Principal, id: string, dto: NamedDto) {
+    const name = dto.nom.trim();
+    if (!name) throw new BadRequestException('Saisissez un nom de dossier.');
+    return this.prisma.$transaction(async (tx) => {
+      await lockAdmin(tx, this.sessions, actor);
+      await lockMediaFolder(tx, id);
+      await tx.mediaFolder.update({ where: { id }, data: { name } });
+    });
+  }
+
+  deleteFolder(actor: Principal, id: string, confirmed: boolean) {
+    if (!confirmed)
+      throw new BadRequestException('Confirmez la suppression du dossier.');
+    return this.prisma.$transaction(async (tx) => {
+      await lockAdmin(tx, this.sessions, actor);
+      // Les deux clés étrangères replacent les éléments directs à la racine.
+      const deleted = await tx.mediaFolder.deleteMany({ where: { id } });
+      if (!deleted.count)
+        throw new NotFoundException('Ce dossier n’existe plus.');
+    });
+  }
+
+  move(actor: Principal, dto: MoveMediaDto) {
+    return this.prisma.$transaction(async (tx) => {
+      await lockAdmin(tx, this.sessions, actor);
+      await lockMediaFolder(tx, dto.folderId);
+      const items = await tx.media.findMany({
+        where: { id: { in: dto.ids }, OR: libraryTypes },
+        select: { id: true },
+      });
+      if (items.length !== dto.ids.length)
+        throw new NotFoundException(
+          'Un des médias sélectionnés n’est plus disponible.',
+        );
+      // Le classement ne modifie pas la version du fichier utilisée dans les URL.
+      const ids = Prisma.join(items.map(({ id }) => Prisma.sql`${id}::uuid`));
+      const updated = await tx.$executeRaw`
+        UPDATE media SET folder_id = ${dto.folderId}::uuid WHERE id IN (${ids})
+      `;
+      if (updated !== dto.ids.length)
+        throw new NotFoundException(
+          'Un des médias sélectionnés n’est plus disponible.',
+        );
+    });
+  }
+
+  async file(id: string, admin: boolean, thumbnail = false) {
     const item = await this.prisma.media.findFirst({
       where: admin ? { ...library, id } : { ...library, ...publiclyUsed, id },
     });
@@ -101,6 +235,13 @@ export class MediaService {
     );
     if (!type) throw new NotFoundException();
     try {
+      if (thumbnail) {
+        const data = await sharp(this.resolve(item.path))
+          .resize(360, 270, { fit: 'inside', withoutEnlargement: true })
+          .webp()
+          .toBuffer();
+        return { data, mime: 'image/webp' };
+      }
       return { data: await readFile(this.resolve(item.path)), mime: type.mime };
     } catch {
       throw new NotFoundException();
@@ -112,6 +253,7 @@ export class MediaService {
     buffer: Buffer | undefined,
     dto?: MediaDto,
     id?: string,
+    folderId?: string,
   ) {
     if (!id && (!dto?.nom.trim() || !dto.alt.trim()))
       throw new BadRequestException();
@@ -132,12 +274,14 @@ export class MediaService {
           sizeBytes: BigInt(image.data.length),
         };
         if (!id) {
+          await lockMediaFolder(tx, folderId);
           const item = await tx.media.create({
             data: {
               ...data,
               type: 'IMAGE',
               name: dto!.nom.trim(),
               altText: dto!.alt.trim(),
+              folderId,
             },
           });
           await contentLog(
@@ -174,13 +318,18 @@ export class MediaService {
   }
 
   update(actor: Principal, id: string, dto: MediaDto) {
-    if (!dto.nom.trim() || !dto.alt.trim()) throw new BadRequestException();
+    if (!dto.nom.trim()) throw new BadRequestException();
     return this.prisma.$transaction(async (tx) => {
       await lockAdmin(tx, this.sessions, actor);
-      await this.lock(tx, id);
+      const item = await this.lock(tx, id, true);
+      if (item.type === 'IMAGE' && !dto.alt.trim())
+        throw new BadRequestException('Le texte alternatif est obligatoire.');
       await tx.media.update({
         where: { id },
-        data: { name: dto.nom.trim(), altText: dto.alt.trim() },
+        data: {
+          name: dto.nom.trim(),
+          altText: item.type === 'IMAGE' ? dto.alt.trim() : null,
+        },
       });
       await contentLog(
         tx,
@@ -188,7 +337,7 @@ export class MediaService {
         'MEDIA',
         id,
         'UPDATE',
-        'Métadonnées de l’image modifiées.',
+        'Métadonnées du média modifiées.',
       );
     });
   }
@@ -212,9 +361,13 @@ export class MediaService {
         },
       });
       if (Object.values(usage._count).some((count) => count > 0))
-        throw new ConflictException();
-      if (item.type === 'GPX' && await gpxBlockUsage(tx, id))
-        throw new ConflictException();
+        throw new ConflictException(
+          'Ce média est utilisé et ne peut pas être supprimé.',
+        );
+      if (item.type === 'GPX' && (await gpxBlockUsage(tx, id)))
+        throw new ConflictException(
+          'Ce GPX est utilisé par un article et ne peut pas être supprimé.',
+        );
       await tx.media.delete({ where: { id } });
       await contentLog(
         tx,
@@ -282,12 +435,25 @@ export class MediaService {
     }
   }
 
-  private async present(item: Media, admin: boolean) {
-    const metadata = admin
-      ? await sharp(this.resolve(item.path))
-          .metadata()
-          .catch(() => null)
-      : null;
+  private presentLibraryItem(item: Media) {
+    const common = {
+      type: item.type,
+      folderId: item.folderId,
+      id: item.id,
+      nom: item.name,
+      createdAt: item.createdAt,
+      tailleKo: Math.max(1, Math.round(Number(item.sizeBytes) / 1024)),
+    };
+    if (item.type === 'GPX') return { ...common, type: 'GPX' as const };
+    return {
+      ...this.present(item, true),
+      ...common,
+      type: 'IMAGE' as const,
+      thumbnail: `/admin/content/media/${item.id}/thumbnail?v=${item.updatedAt.getTime()}`,
+    };
+  }
+
+  private present(item: Media, admin: boolean) {
     return {
       id: item.id,
       nom: item.name,
@@ -295,8 +461,8 @@ export class MediaService {
       format: Object.values(formats).find((format) => format.db === item.format)
         ?.display,
       tailleKo: Math.max(1, Math.round(Number(item.sizeBytes) / 1024)),
-      largeur: metadata?.width ?? 0,
-      hauteur: metadata?.height ?? 0,
+      largeur: 0,
+      hauteur: 0,
       createdAt: item.createdAt,
       file: admin
         ? `/admin/content/media/${item.id}/file?v=${item.updatedAt.getTime()}`

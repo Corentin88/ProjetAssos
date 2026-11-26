@@ -48,6 +48,15 @@ export type ContentSnapshot = Pick<Database, 'articles' | 'categories' | 'tags' 
 const emptyContent = (): ContentSnapshot => ({ articles: [], categories: [], tags: [], medias: [] })
 export const publicContent = emptyContent()
 let adminContent: ContentSnapshot | null = null
+const selectedMedia = new Map<string, Media>()
+
+export function rememberMedia(media: Media) {
+  selectedMedia.set(media.id, media)
+}
+
+export function recalledMedia(id: string) {
+  return selectedMedia.get(id)
+}
 export const contentStatus = { public: 'loading', admin: 'loading' } as Record<'public' | 'admin', 'loading' | 'ready' | 'error'>
 
 function freshDatabase(): Database {
@@ -125,6 +134,7 @@ export function useDbVersion(): number {
 export function setContent(scope: 'public' | 'admin', data?: ContentSnapshot) {
   if (scope === 'admin') adminContent = data ?? null
   else if (data) Object.assign(publicContent, data)
+  if (scope === 'admin' && !data) selectedMedia.clear()
   contentStatus[scope] = data ? 'ready' : 'loading'
   Object.assign(db, adminContent ?? publicContent)
   emit(false)

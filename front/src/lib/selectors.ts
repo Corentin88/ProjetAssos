@@ -1,7 +1,7 @@
 import type { Article, Block, Comment, Media, User } from '../types'
 import { mediasSeed } from '../data/medias'
 import { articlesSeed } from '../data/articles'
-import { db, publicContent } from './db'
+import { db, publicContent, recalledMedia } from './db'
 
 // ------------------------------------------------------------
 // Sélecteurs de lecture (helpers réutilisables)
@@ -37,6 +37,7 @@ export function getMedia(id: string | null | undefined): Media | undefined {
   if (!id) return undefined
   return publicContent.medias.find((m) => m.id === id)
     ?? db.medias.find((m) => m.id === id)
+    ?? recalledMedia(id)
     ?? mediasSeed.find((m) => m.id === id)
 }
 

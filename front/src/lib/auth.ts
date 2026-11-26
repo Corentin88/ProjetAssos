@@ -16,6 +16,8 @@ type ApiProfile = {
   pendingEmail: string | null
   authMethods: ('password' | 'google')[]
   avatar: ApiAvatar
+  hasPersonalAvatar?: boolean
+  googleAvatar?: string | null
 }
 
 type ApiPublicProfile = {
@@ -82,6 +84,8 @@ function mapProfile(profile: ApiProfile): User {
     role: profile.role === 'ADMIN' ? 'administrateur' : 'utilisateur',
     statut: profile.status === 'ACTIVE' ? 'actif' : 'suspendu',
     avatar: mapAvatar(profile.avatar),
+    hasPersonalAvatar: profile.hasPersonalAvatar ?? profile.avatar.kind === 'PERSONAL',
+    googleAvatar: profile.googleAvatar ?? undefined,
     authMethods: profile.authMethods.map(method => method === 'password' ? 'motdepasse' : 'google'),
     createdAt: profile.createdAt,
     lastActivityAt: profile.lastActiveAt ?? profile.createdAt,
@@ -218,10 +222,19 @@ export async function updateProfile(firstName: string, lastName: string) {
 }
 
 export async function updateAvatar(avatar: Avatar) {
-  const body = avatar.type === 'initiales'
-    ? { kind: 'PRESET', preset: avatar.colorIndex }
-    : { kind: 'DEFAULT' }
-  const profile = mapProfile(await protectedRequest<ApiProfile>('/profiles/me/avatar', 'PATCH', body))
+  const body = avatar.type === 'initiales' ? { kind: 'PRESET', preset: avatar.colorIndex }
+    : { kind: avatar.type === 'image' ? 'PERSONAL' : avatar.type === 'google' ? 'GOOGLE' : 'DEFAULT' }
+  await saveAvatar('PATCH', body)
+}
+
+export function uploadAvatar(file: File) {
+  const form = new FormData()
+  form.set('image', file)
+  return saveAvatar('POST', form)
+}
+
+async function saveAvatar(method: 'PATCH' | 'POST', body: object) {
+  const profile = mapProfile(await protectedRequest<ApiProfile>('/profiles/me/avatar', method, body))
   if (snapshot.user?.id === profile.id) publish({ status: 'ready', user: profile })
 }
 
@@ -282,7 +295,7 @@ export async function getPublicProfile(id: string) {
 }
 
 export async function fetchAvatar(path: string, signal: AbortSignal) {
-  if (!/^\/api\/v1\/profiles\/[a-f0-9-]{36}\/avatar$/i.test(path)) throw new Error('Avatar invalide')
+  if (!/^\/api\/v1\/profiles\/[a-f0-9-]{36}\/avatar(?:\?v=[a-f0-9-]{36})?$/i.test(path)) throw new Error('Avatar invalide')
   const token = await activeToken()
   const response = await fetch(`${api}${path.slice('/api/v1'.length)}`, {
     headers: { Authorization: `Bearer ${token}` }, credentials: 'include', signal,

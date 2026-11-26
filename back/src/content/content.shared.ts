@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { lockUser, SessionService } from '../auth/session.service.js';
 import type { Principal } from '../auth/session.service.js';
@@ -40,4 +40,12 @@ export function contentLog(
   return tx.activityLog.create({
     data: { userId, target, targetId, action, description },
   });
+}
+
+export async function lockMediaFolder(tx: Prisma.TransactionClient, id?: string | null) {
+  if (!id) return;
+  const rows = await tx.$queryRaw<{ id: string }[]>`
+    SELECT id FROM media_folders WHERE id = ${id}::uuid FOR KEY SHARE
+  `;
+  if (!rows.length) throw new NotFoundException('Ce dossier n’existe plus.');
 }

@@ -1,11 +1,13 @@
 import { useRef, useState } from 'react'
-import type { Block, GpxMedia, GpxPreview, TrailBlockFields, TrailMeasurements, TrailVisibility } from '../../types'
+import type { Block, GpxPreview, TrailBlockFields, TrailMeasurements, TrailVisibility } from '../../types'
 import { ApiError, authErrorMessage, protectedRequest } from '../../lib/auth'
+import { useResource } from '../../lib/community'
 import { toInputDateTime } from '../../lib/format'
 import { defaultTrailMapSettings, defaultTrailVisibility, emptyTrail } from '../../lib/mapBlocks'
 import { difficulties } from '../content/TrailDetails'
 import { TrailMap } from '../content/TrailMap'
 import { Button, Field, Input, Select, Textarea } from '../ui/form'
+import { MediaPicker } from './MediaPicker'
 
 const numberFields = [
   ['distance', 'Distance (km)', 0, 'any'],
@@ -42,11 +44,8 @@ function getGpxPreview(id: string) {
   return protectedRequest<GpxPreview>(`/admin/content/gpx/${id}/preview`)
 }
 
-export function TrailEditor({ block, files, filesError, refresh, onChange, onBusy, errors }: {
+export function TrailEditor({ block, onChange, onBusy, errors }: {
   block: Block
-  files?: GpxMedia[]
-  filesError?: string
-  refresh: () => void
   onChange: (patch: Partial<Block>) => void
   onBusy?: (id: string, busy: boolean) => void
   errors?: Record<string, string>
@@ -59,11 +58,12 @@ export function TrailEditor({ block, files, filesError, refresh, onChange, onBus
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [imported, setImported] = useState<{ id: string; name: string }>()
+  const [pickerOpen, setPickerOpen] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
   const pendingUpload = useRef<{ file: File; id: string }>()
   const lastExtraction = useRef<{ id: string; details: TrailMeasurements }>()
 
-  async function chooseGpx(load: () => Promise<{ id: string; preview: GpxPreview }>, localFile?: File) {
+  async function chooseGpx(load: () => Promise<{ id: string; preview: GpxPreview }>, localFile?: File, selectedName?: string) {
     setError('')
     setFailedFile(null)
     setBusy(true)
@@ -85,11 +85,10 @@ export function TrailEditor({ block, files, filesError, refresh, onChange, onBus
         trail: prefillTrail(trail, preview.details, priorDetails),
       })
       lastExtraction.current = { id, details: preview.details }
-      if (localFile) {
-        setImported({ id, name: localFile.name })
-        pendingUpload.current = undefined
-        refresh()
-      } else if (fileInput.current) fileInput.current.value = ''
+      const name = localFile?.name ?? selectedName
+      if (name) setImported({ id, name })
+      if (localFile) pendingUpload.current = undefined
+      else if (fileInput.current) fileInput.current.value = ''
     } catch (error) {
       setFailedFile(localFile ?? null)
       setError(`${localFile ? 'Import GPX impossible.' : 'Association du GPX impossible.'} ${authErrorMessage(error)}`)
@@ -120,37 +119,29 @@ export function TrailEditor({ block, files, filesError, refresh, onChange, onBus
 
   const gpxError = error || errors?.[fieldId('file')]
   const nameError = errors?.[fieldId('name')]
-  const associatedName = files?.find(item => item.id === block.mediaId)?.nom
-    ?? (imported?.id === block.mediaId ? imported?.name : undefined)
+  const localName = imported?.id === block.mediaId ? imported?.name : undefined
+  const { data: associatedFile } = useResource<{ nom: string }>(
+    block.mediaId && !localName ? `/admin/content/media/${block.mediaId}` : undefined, true,
+  )
+  const associatedName = localName ?? associatedFile?.nom
 
   return (
     <fieldset className="grid min-w-0 gap-4 sm:grid-cols-2" disabled={busy} aria-busy={busy}>
       <legend className="sr-only">Données du parcours</legend>
-      {!!files?.length && <Field label="Fichier GPX de la médiathèque" htmlFor={fieldId('media')}>
-        <Select id={fieldId('media')} value={block.mediaId ?? ''} onChange={event => {
-          const id = event.target.value
-          if (!id) {
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="secondaire" onClick={() => setPickerOpen(true)}>Choisir un GPX</Button>
+        {block.mediaId && <Button variant="blanc" onClick={() => {
             setError('')
             setFailedFile(null)
             lastExtraction.current = undefined
             if (fileInput.current) fileInput.current.value = ''
             onChange({ mediaId: undefined, mapPreview: null })
-            return
-          }
-          void chooseGpx(async () => ({
-            id,
-            preview: await getGpxPreview(id),
-          }))
-        }}>
-          <option value="">Choisir un fichier</option>
-          {block.mediaId && !files.some(item => item.id === block.mediaId) && <option value={block.mediaId}>Fichier associé</option>}
-          {files.map(item => <option key={item.id} value={item.id}>{item.nom}</option>)}
-        </Select>
-      </Field>}
-      {filesError && <div className="sm:col-span-2">
-        <p role="alert">Impossible de charger les GPX de la médiathèque.</p>
-        <Button variant="secondaire" size="petit" onClick={refresh}>Réessayer</Button>
-      </div>}
+        }}>Retirer le GPX</Button>}
+      </div>
+      <MediaPicker open={pickerOpen} onClose={() => setPickerOpen(false)} titre="Choisir un parcours GPX"
+        type="GPX" selectionActive={block.mediaId} onChoose={item => {
+          void chooseGpx(async () => ({ id: item.id, preview: await getGpxPreview(item.id) }), undefined, item.nom)
+        }} />
       <Field label="Fichier GPX à importer" htmlFor={fieldId('file')} error={gpxError}
         hint="La sélection lance l’import et préremplit les mesures disponibles. 5 Mio maximum."
       >

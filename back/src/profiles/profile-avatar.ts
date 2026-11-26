@@ -5,16 +5,23 @@ export const profileFields = {
   lastName: true,
   avatarKind: true,
   avatarPreset: true,
+  avatarMediaId: true,
   googleAvatar: true,
 } as const;
 
 export function presentAvatar(
   userId: string,
-  profile: Pick<Profile, 'avatarKind' | 'avatarPreset' | 'googleAvatar'>,
+  profile: Pick<
+    Profile,
+    'avatarKind' | 'avatarPreset' | 'avatarMediaId' | 'googleAvatar'
+  >,
 ) {
   const kind = profile.avatarKind;
-  if (kind === 'PERSONAL')
-    return { kind, url: `/api/v1/profiles/${userId}/avatar` };
+  if (kind === 'PERSONAL' && profile.avatarMediaId)
+    return {
+      kind,
+      url: `/api/v1/profiles/${userId}/avatar?v=${profile.avatarMediaId}`,
+    };
   if (kind === 'PRESET') return { kind, preset: Number(profile.avatarPreset) };
   if (kind === 'GOOGLE' && profile.googleAvatar)
     return { kind, url: profile.googleAvatar };

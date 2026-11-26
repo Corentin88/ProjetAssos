@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Camera, CheckCircle2, Info } from 'lucide-react'
 import type { Avatar as AvatarSpec } from '../../types'
-import { authErrorMessage, requestEmailChange, updateAvatar, updateProfile, useCurrentUser } from '../../lib/auth'
+import { authErrorMessage, requestEmailChange, updateAvatar, updateProfile, uploadAvatar, useCurrentUser } from '../../lib/auth'
 import { Avatar } from '../../components/ui/misc'
 import { Button, Field, Input } from '../../components/ui/form'
 import { Alert } from '../../components/ui/feedback'
@@ -20,6 +20,8 @@ export function Profil() {
   const [nouvelEmail, setNouvelEmail] = useState('')
   const [errEmail, setErrEmail] = useState('')
   const [enCours, setEnCours] = useState(false)
+  const [fichierAvatar, setFichierAvatar] = useState<File>()
+  const [photoGoogleEnEchec, setPhotoGoogleEnEchec] = useState<string>()
 
   if (!user) return null
 
@@ -106,13 +108,12 @@ export function Profil() {
           Mon avatar
         </h2>
         <p className="mt-2 text-[0.9375rem] text-mist">
-          Choisissez un avatar prédéfini ou l'avatar par défaut du site. L'image personnelle sera
-          importable depuis la médiathèque en phase de développement.
+          Choisissez la photo ou l’avatar affiché sur votre profil.
         </p>
         <div className="mt-5 flex flex-wrap items-center gap-4">
           <Avatar user={user} size="lg" />
           <fieldset disabled={enCours}>
-            <legend className="mb-2 font-bold">Avatars prédéfinis</legend>
+            <legend className="mb-2 font-bold">Avatars disponibles</legend>
             <ul className="flex flex-wrap gap-3">
               {avatarsPredefinis.map((av, i) => (
                 <li key={i}>
@@ -121,21 +122,36 @@ export function Profil() {
                     onClick={() => void choisirAvatar(av)}
                     aria-label={`Choisir l'avatar prédéfini ${i + 1}`}
                     aria-pressed={user.avatar.type === 'initiales' && couleurParDefaut === i}
-                    className={`h-14 w-14 rounded-full border-4 ${
+                    className={`inline-grid h-14 w-14 place-items-center rounded-full border-4 ${
                       user.avatar.type === 'initiales' && couleurParDefaut === i
                         ? 'border-ocre'
                         : 'border-transparent'
                     }`}
                   >
-                    <span
-                      className="flex h-full w-full items-center justify-center rounded-full font-bold text-white"
-                      style={{ background: ['#244D3B', '#426B50', '#9A5B22', '#5D8468', '#7C4A1B', '#24332B'][i] }}
-                    >
-                      {`${user.prenom.charAt(0)}${user.nom.charAt(0)}`.toUpperCase()}
-                    </span>
+                    <Avatar user={{ ...user, avatar: av }} size="sm" />
                   </button>
                 </li>
               ))}
+              {user.hasPersonalAvatar && (
+                <li>
+                  <Button variant="secondaire" aria-pressed={user.avatar.type === 'image'}
+                    onClick={() => void choisirAvatar({ type: 'image' })}>
+                    <Camera aria-hidden="true" className="h-5 w-5" />
+                    Ma photo personnelle
+                  </Button>
+                </li>
+              )}
+              {user.googleAvatar && user.googleAvatar !== photoGoogleEnEchec && (
+                <li>
+                  <Button variant="secondaire" aria-pressed={user.avatar.type === 'google'}
+                    onClick={() => void choisirAvatar({ type: 'google' })}>
+                    <img src={user.googleAvatar} alt="" referrerPolicy="no-referrer"
+                      className="h-7 w-7 rounded-full object-cover"
+                      onError={() => setPhotoGoogleEnEchec(user.googleAvatar)} />
+                    Photo Google
+                  </Button>
+                </li>
+              )}
               <li>
                 <button
                   type="button"
@@ -152,6 +168,31 @@ export function Profil() {
             </ul>
           </fieldset>
         </div>
+        {user.authMethods.includes('google') && (!user.googleAvatar || user.googleAvatar === photoGoogleEnEchec) && (
+          <p role="status" className="mt-3 text-mist">La photo Google est indisponible. Vous pouvez choisir un autre avatar.</p>
+        )}
+        <form className="mt-5 flex flex-col items-start gap-3" onSubmit={async event => {
+          event.preventDefault()
+          if (!fichierAvatar || enCours) return
+          const form = event.currentTarget
+          setEnCours(true)
+          try {
+            await uploadAvatar(fichierAvatar)
+            form.reset()
+            setFichierAvatar(undefined)
+            toast('Votre image personnelle a été enregistrée.')
+          } catch (error) {
+            toast(authErrorMessage(error), 'erreur')
+          } finally {
+            setEnCours(false)
+          }
+        }}>
+          <Field label="Image personnelle" htmlFor="profil-avatar" hint="JPEG, PNG ou WebP. 2 Mio maximum.">
+            <Input id="profil-avatar" type="file" accept="image/jpeg,image/png,image/webp" disabled={enCours}
+              onChange={event => setFichierAvatar(event.target.files?.[0])} />
+          </Field>
+          <Button type="submit" variant="secondaire" disabled={enCours || !fichierAvatar}>Importer mon image</Button>
+        </form>
       </section>
 
       {/* Adresse e-mail (§8) */}

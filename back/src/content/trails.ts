@@ -21,7 +21,7 @@ import { Prisma, TrailDifficulty } from '../../generated/prisma/client.js';
 import { SessionService } from '../auth/session.service.js';
 import type { Principal } from '../auth/session.service.js';
 import { PrismaService } from '../prisma/prisma.module.js';
-import { contentLog, lockAdmin } from './content.shared.js';
+import { contentLog, lockAdmin, lockMediaFolder } from './content.shared.js';
 import { ContentInputError } from './content-input.error.js';
 import { describeGpx, sampleGpx } from './gpx-details.js';
 import type { GpxPoint } from './gpx-details.js';
@@ -227,7 +227,7 @@ export class TrailsService {
     }));
   }
 
-  async upload(actor: Principal, file?: Buffer, originalName?: string) {
+  async upload(actor: Principal, file?: Buffer, originalName?: string, folderId?: string) {
     const data = file ?? Buffer.alloc(0);
     const preview = parseGpxUpload(data);
     const path = `trails/${randomUUID()}.gpx`;
@@ -236,6 +236,7 @@ export class TrailsService {
     try {
       return await this.prisma.$transaction(async (tx) => {
         await lockAdmin(tx, this.sessions, actor);
+        await lockMediaFolder(tx, folderId);
         const name =
           originalName
             ?.replace(/[\x00-\x1f\x7f]/g, '')
@@ -248,6 +249,7 @@ export class TrailsService {
             format: 'GPX',
             path,
             sizeBytes: BigInt(data.length),
+            folderId,
           },
         });
         await contentLog(

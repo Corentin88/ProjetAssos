@@ -3,7 +3,6 @@ import {
   Equals,
   IsEmail,
   IsEnum,
-  IsIn,
   IsInt,
   IsString,
   Length,
@@ -134,8 +133,8 @@ export class ChangeStatusDto {
 }
 
 export class AvatarDto {
-  @IsIn([AvatarKind.DEFAULT, AvatarKind.PRESET, AvatarKind.GOOGLE])
-  kind: 'DEFAULT' | 'PRESET' | 'GOOGLE';
+  @IsEnum(AvatarKind)
+  kind: AvatarKind;
 
   @ValidateIf(
     (dto) => dto.kind === AvatarKind.PRESET || dto.preset !== undefined,

@@ -446,6 +446,19 @@ model AssociationBlock {
   @@map("association_blocks")
 }
 
+model MediaFolder {
+  id       String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name     String  @db.VarChar(255)
+  parentId String? @map("parent_id") @db.Uuid
+
+  parent   MediaFolder? @relation("MediaFolderHierarchy", fields: [parentId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  children MediaFolder[] @relation("MediaFolderHierarchy")
+  media    Media[]
+
+  @@index([parentId], map: "idx_media_folders_parent_id")
+  @@map("media_folders")
+}
+
 model Media {
   id        String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name      String      @db.VarChar(255)
@@ -456,6 +469,8 @@ model Media {
   altText   String?     @map("alt_text")
   createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  folderId  String?     @map("folder_id") @db.Uuid
+  folder    MediaFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
   profiles          Profile[]
   articleCovers     ArticleVersion[]
@@ -463,6 +478,7 @@ model Media {
   associationBlocks AssociationBlock[]
   trails            Trail[]
 
+  @@index([folderId], map: "idx_media_folder_id")
   @@map("media")
 }
 
