@@ -62,6 +62,7 @@ services:
       API_ORIGIN: https://${PUBLIC_DOMAIN:?Définissez PUBLIC_DOMAIN}
       FRONT_ORIGIN: https://${PUBLIC_DOMAIN:?Définissez PUBLIC_DOMAIN}
       TRUST_PROXY_IP: ${EDGE_IP:-172.30.72.2}
+      PDF_MAX_MIB: ${PDF_MAX_MIB:-20}
       SMTP_URL: ${SMTP_URL:-}
       MAIL_FROM: ${MAIL_FROM:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}

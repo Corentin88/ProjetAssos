@@ -1,0 +1,6 @@
+BEGIN;
+
+ALTER TYPE "block_type" ADD VALUE 'PDF';
+ALTER TABLE "media" ADD COLUMN "original_name" VARCHAR(255);
+
+COMMIT;

@@ -59,6 +59,8 @@ enum BlockType {
   SUBHEADING
   PARAGRAPH
   IMAGE
+  CAROUSEL
+  PDF
   YOUTUBE
   LIST
   LINK
@@ -310,10 +312,28 @@ model ArticleBlock {
 
   version ArticleVersion @relation(fields: [versionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   media   Media?         @relation(fields: [mediaId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  slides  ArticleBlockImage[]
 
   @@unique([versionId, position])
   @@index([mediaId])
   @@map("article_blocks")
+}
+
+model ArticleBlockImage {
+  blockId  String  @map("block_id") @db.Uuid
+  position Int
+  mediaId  String  @map("media_id") @db.Uuid
+  alt      String  @db.VarChar(1000)
+  caption  String? @db.VarChar(1000)
+  viewPdf Boolean @default(false) @map("view_pdf")
+  downloadPdf Boolean @default(false) @map("download_pdf")
+
+  block ArticleBlock @relation(fields: [blockId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  media Media        @relation(fields: [mediaId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@id([blockId, position])
+  @@index([mediaId])
+  @@map("article_block_images")
 }
 
 model Category {
@@ -322,10 +342,14 @@ model Category {
   slug      String   @unique @db.VarChar(255)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  icon      String?  @db.VarChar(40)
+  visualMediaId String? @map("visual_media_id") @db.Uuid
 
   articles ArticleCategory[]
   media    Media[] @relation("MediaCategories")
+  visualMedia Media? @relation("CategoryVisual", fields: [visualMediaId], references: [id], onDelete: Restrict, onUpdate: NoAction)
 
+  @@index([visualMediaId])
   @@map("categories")
 }
 
@@ -480,6 +504,10 @@ model Media {
   path      String      @unique
   sizeBytes BigInt      @map("size_bytes")
   altText   String?     @map("alt_text")
+  originalName String? @map("original_name") @db.VarChar(255)
+  previewOfId String? @unique @map("preview_of_id") @db.Uuid
+  previewOf Media? @relation("PdfPreview", fields: [previewOfId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  preview Media? @relation("PdfPreview")
   createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   folderId  String?     @map("folder_id") @db.Uuid
@@ -491,6 +519,8 @@ model Media {
   profiles          Profile[]
   articleCovers     ArticleVersion[]
   articleBlocks     ArticleBlock[]
+  articleBlockImages ArticleBlockImage[]
+  categoryVisuals   Category[] @relation("CategoryVisual")
   associationBlocks AssociationBlock[]
   trails            Trail[]
 

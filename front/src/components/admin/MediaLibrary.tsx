@@ -1,14 +1,15 @@
 import { useEffect, useId, useMemo, useState } from 'react'
-import { ChevronLeft, ChevronRight, Folder, Route } from 'lucide-react'
+import { ChevronLeft, ChevronRight, FileText, Folder, Route } from 'lucide-react'
 import type { LibraryItem, MediaFolder } from '../../types'
 import { useResource } from '../../lib/community'
 import { useDb } from '../../lib/db'
+import { formatTaille } from '../../lib/format'
 import { ContentImage } from '../content/ContentImage'
 import { Alert, EmptyState } from '../ui/feedback'
 import { Button, Field, Input, Select } from '../ui/form'
 
-type MediaPage = { total: number; pageSize: number; items: LibraryItem[] }
-type LibraryType = LibraryItem['type']
+type MediaPage = { total: number; pageSize: number; items: LibraryItem[]; pdfMaxBytes?: number }
+export type LibraryType = LibraryItem['type'] | 'VISUAL'
 
 const root = 'unfiled'
 const initialFilters = { folder: '', type: '', sort: 'date', page: 1, category: '', tag: '' }
@@ -67,7 +68,7 @@ export function folderPath(byId: Map<string, MediaFolder>, id: string) {
   return path.reverse()
 }
 
-export function FolderOptions({ library }: { library: ReturnType<typeof useMediaLibrary> }) {
+export function FolderOptions({ library }: { library: Pick<ReturnType<typeof useMediaLibrary>, 'byId'> }) {
   const { byId } = library
   const folders = useMemo(() => [...byId.values()].map(folder => ({
     id: folder.id, label: folderPath(byId, folder.id).map(item => item.name).join(' / '),
@@ -75,12 +76,13 @@ export function FolderOptions({ library }: { library: ReturnType<typeof useMedia
   return <>{folders.map(folder => <option key={folder.id} value={folder.id}>{folder.label}</option>)}</>
 }
 
-export function MediaLibrary({ library, activeId, selected, onOpen, onToggle }: {
+export function MediaLibrary({ library, activeId, selected, onOpen, onToggle, itemDisabled }: {
   library: ReturnType<typeof useMediaLibrary>
   activeId?: string
   selected?: Set<string>
   onOpen: (item: LibraryItem) => void
   onToggle?: (id: string) => void
+  itemDisabled?: (item: LibraryItem) => boolean
 }) {
   const id = useId()
   const { categories, tags } = useDb()
@@ -96,7 +98,7 @@ export function MediaLibrary({ library, activeId, selected, onOpen, onToggle }: 
         </Field>
         {!library.fixedType && <Field label="Type de média" htmlFor={`${id}-type`}>
           <Select id={`${id}-type`} value={library.effectiveType} onChange={event => library.setType(event.target.value)}>
-            <option value="">Tous les types</option><option value="IMAGE">Images</option><option value="GPX">Fichiers GPX</option>
+            <option value="">Tous les types</option><option value="IMAGE">Images</option><option value="GPX">Fichiers GPX</option><option value="PDF">Documents PDF</option>
           </Select>
         </Field>}
         <Field label="Dossier" htmlFor={`${id}-dossier`}>
@@ -157,15 +159,16 @@ export function MediaLibrary({ library, activeId, selected, onOpen, onToggle }: 
         <p role="status" className="text-sm text-mist">{results.data.total} média{results.data.total > 1 ? 's' : ''}</p>
         {results.data.items.length ? <ul aria-label="Médias" className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,10rem),1fr))] gap-3">
           {results.data.items.map(item => <li key={item.id} className="relative min-w-0">
-            <button type="button" aria-pressed={item.id === activeId} title={item.nom} onClick={() => onOpen(item)}
-              className={`w-full overflow-hidden rounded-xl border bg-white p-2 text-left hover:border-forest ${item.id === activeId || selected?.has(item.id) ? 'border-forest ring-2 ring-forest' : 'border-line'}`}>
+            <button type="button" aria-pressed={item.id === activeId || (!onToggle && Boolean(selected?.has(item.id)))}
+              disabled={itemDisabled?.(item)} title={item.nom} onClick={() => onOpen(item)}
+              className={`w-full overflow-hidden rounded-xl border bg-white p-2 text-left hover:border-forest disabled:opacity-60 ${item.id === activeId || selected?.has(item.id) ? 'border-forest ring-2 ring-forest' : 'border-line'}`}>
               <div className="grid aspect-[4/3] place-items-center overflow-hidden rounded-lg bg-sand">
                 {item.type === 'IMAGE'
                   ? <ContentImage src={item.thumbnail} loading="lazy" alt="" className="h-full w-full min-h-0 object-contain" />
-                  : <Route aria-hidden="true" className="h-10 w-10 text-forest" />}
+                  : item.type === 'PDF' ? <FileText aria-hidden="true" className="h-10 w-10 text-forest" /> : <Route aria-hidden="true" className="h-10 w-10 text-forest" />}
               </div>
               <span className="mt-2 block truncate font-bold">{item.nom}</span>
-              <span className="text-sm text-mist">{item.type === 'IMAGE' ? `Image · ${item.format}` : 'Parcours GPX'}</span>
+              <span className="text-sm text-mist">{item.type === 'IMAGE' ? `Image · ${item.format}` : item.type === 'PDF' ? `PDF · ${formatTaille(item.tailleKo)}` : 'Parcours GPX'}</span>
             </button>
             {onToggle && <input type="checkbox" checked={Boolean(selected?.has(item.id))}
               disabled={selected?.size === 1000 && !selected.has(item.id)}

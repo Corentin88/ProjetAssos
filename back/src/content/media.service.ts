@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   BadRequestException,
@@ -15,6 +15,7 @@ import type { Media } from '../../generated/prisma/client.js';
 import { SessionService } from '../auth/session.service.js';
 import type { Principal } from '../auth/session.service.js';
 import { PrismaService } from '../prisma/prisma.module.js';
+import { pdfMaxBytes } from '../config/runtime.module.js';
 import type {
   MediaDto,
   MediaClassificationDto,
@@ -25,6 +26,9 @@ import type {
 } from './content.dto.js';
 import { contentLog, lockAdmin, lockMediaFolder } from './content.shared.js';
 import { imageFormat } from './image-format.js';
+import { pdfDisposition, validatePdfUpload } from './pdf-document.js';
+import type { PdfUpload } from './pdf-document.js';
+import { pdfPageCount, renderPdfPage } from './pdf-render.js';
 import { gpxBlockUsage, gpxLibrary, gpxPath } from './trails.js';
 
 const library = {
@@ -40,6 +44,8 @@ const publiclyUsed = {
   OR: [
     { articleCovers: { some: published } },
     { articleBlocks: { some: { version: published } } },
+    { articleBlockImages: { some: { block: { version: published } } } },
+    { categoryVisuals: { some: { articles: { some: { version: published } } } } },
     { associationBlocks: { some: {} } },
   ],
 } satisfies Prisma.MediaWhereInput;
@@ -47,10 +53,19 @@ const adminUsed = {
   OR: [
     { articleCovers: { some: {} } },
     { articleBlocks: { some: {} } },
+    { articleBlockImages: { some: {} } },
+    { categoryVisuals: { some: {} } },
     { associationBlocks: { some: {} } },
   ],
 } satisfies Prisma.MediaWhereInput;
-const libraryTypes = [library, gpxLibrary];
+const pdfLibrary = { type: 'PDF', path: { startsWith: 'content/' } } satisfies Prisma.MediaWhereInput;
+const libraryByType = { IMAGE: { ...library, previewOfId: null }, GPX: gpxLibrary, PDF: pdfLibrary };
+const libraryTypes = Object.values(libraryByType);
+const articleUsage = {
+  articleCovers: { select: { articleId: true, title: true } },
+  articleBlocks: { select: { version: { select: { articleId: true, title: true } } } },
+  articleBlockImages: { select: { block: { select: { version: { select: { articleId: true, title: true } } } } } },
+} satisfies Prisma.MediaInclude;
 type LibraryMedia = Omit<Media, 'gpxElevations'>;
 const pageSize = 24;
 const sortOrder = {
@@ -68,6 +83,7 @@ const directory = 'storage/content-images';
 @Injectable()
 export class MediaService {
   private readonly logger = new Logger(MediaService.name);
+  private readonly previews = new Map<string, Promise<ReturnType<MediaService['present']>>>();
   constructor(
     private readonly prisma: PrismaService,
     private readonly sessions: SessionService,
@@ -89,15 +105,10 @@ export class MediaService {
     const where: Prisma.MediaWhereInput = {
       AND: [
         {
-          OR:
-            query.type === 'IMAGE'
-              ? [library]
-              : query.type === 'GPX'
-                ? [gpxLibrary]
-                : libraryTypes,
+          OR: query.type === 'VISUAL' ? [libraryByType.IMAGE, pdfLibrary] : query.type ? [libraryByType[query.type]] : libraryTypes,
         },
         ...(search ? [{ OR: [
-          { name: matches }, { altText: matches },
+          { name: matches }, { altText: matches }, { originalName: matches },
           { categories: { some: { name: matches } } }, { tags: { some: { name: matches } } },
         ] }] : []),
         ...(query.category ? [{ categories: { some: { id: query.category } } }] : []),
@@ -120,6 +131,7 @@ export class MediaService {
         return {
           total,
           pageSize,
+          pdfMaxBytes,
           items: items.map((item) => this.presentLibraryItem(item)),
         };
       },
@@ -137,17 +149,17 @@ export class MediaService {
         _count: {
           select: { profiles: true, associationBlocks: true, trails: true },
         },
-        articleCovers: { select: { articleId: true, title: true } },
-        articleBlocks: {
-          select: { version: { select: { articleId: true, title: true } } },
-        },
+        ...articleUsage,
+        preview: { select: { ...articleUsage, _count: { select: { profiles: true, associationBlocks: true } }, categoryVisuals: { select: { name: true } } } },
+        categoryVisuals: { select: { name: true }, orderBy: { name: 'asc' } },
       },
     });
     if (!item) throw new NotFoundException();
-    const versions = [
-      ...item.articleCovers,
-      ...item.articleBlocks.map((block) => block.version),
-    ];
+    const references = item.preview ? [item, item.preview] : [item];
+    const versions = references.flatMap(source => [
+      ...source.articleCovers, ...source.articleBlocks.map(block => block.version),
+      ...source.articleBlockImages.map(({ block }) => block.version),
+    ]);
     const metadata =
       item.type === 'IMAGE'
         ? await sharp(this.resolve(item.path))
@@ -170,9 +182,10 @@ export class MediaService {
             versions.map((version) => [version.articleId, version.title]),
           ).values(),
         ],
-        avatars: item._count.profiles,
-        association: Boolean(item._count.associationBlocks),
+        avatars: item._count.profiles + (item.preview?._count.profiles ?? 0),
+        association: Boolean(item._count.associationBlocks || item.preview?._count.associationBlocks),
         trails,
+        categoryVisuals: references.flatMap(source => source.categoryVisuals.map(category => category.name)),
       },
     };
   }
@@ -286,33 +299,141 @@ export class MediaService {
     id?: string,
     folderId?: string,
   ) {
-    if (!id && (!dto?.nom.trim() || !dto.alt.trim()))
+    if (!id && (!dto?.nom.trim() || (!dto.decorative && !dto.alt.trim())))
       throw new BadRequestException();
     const image = await this.decode(buffer);
-    const path = `content/${randomUUID()}.${image.extension}`;
+    return this.storeContent(actor, image, dto && {
+      type: 'IMAGE', name: dto.nom.trim(), altText: dto.decorative ? '' : dto.alt.trim(), folderId,
+    }, id);
+  }
+
+  uploadPdf(actor: Principal, file: PdfUpload | undefined, dto: NamedDto, folderId?: string) {
+    const { originalName, data } = validatePdfUpload(file);
+    return this.storeContent(actor, { data, extension: 'pdf', format: 'PDF' }, {
+      type: 'PDF', name: dto.nom.trim() || originalName, originalName, folderId,
+    });
+  }
+
+  pdfVisual(actor: Principal, id: string) {
+    const pending = this.previews.get(id);
+    if (pending) return pending;
+    const creation = this.ensurePdfVisual(actor, id).finally(() => this.previews.delete(id));
+    this.previews.set(id, creation);
+    return creation;
+  }
+
+  private async ensurePdfVisual(actor: Principal, id: string) {
+    const source = await this.prisma.media.findFirst({ where: { id, ...pdfLibrary }, include: { preview: true } });
+    if (!source) throw new NotFoundException();
+    if (source.preview) return this.present(source.preview, true);
+    const data = await renderPdfPage(this.resolve(source.path), 1, true);
+    try {
+      const preview = await this.storeContent(actor, { data, extension: 'png', format: 'PNG' }, {
+        type: 'IMAGE', name: source.name, altText: source.name, previewOfId: id,
+      });
+      if (preview?.type === 'IMAGE') return preview;
+      throw new NotFoundException();
+    } catch (error) {
+      // L’index unique protège aussi deux instances qui génèrent le même aperçu.
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') throw error;
+      const preview = await this.prisma.media.findUnique({ where: { previewOfId: id } });
+      if (!preview) throw error;
+      return this.present(preview, true);
+    }
+  }
+
+  async articlePdf(articleId: string, blockId: string, download: boolean, admin = false, slide?: number) {
+    return this.openPdf(await this.articlePdfSource(articleId, blockId, download, admin, slide), download);
+  }
+
+  async articlePdfRaster(articleId: string, blockId: string, admin: boolean, page?: number, slide?: number) {
+    const media = await this.articlePdfSource(articleId, blockId, false, admin, slide);
+    const path = this.resolve(media.path);
+    return page === undefined ? { pages: await pdfPageCount(path) } : renderPdfPage(path, page);
+  }
+
+  private async articlePdfSource(articleId: string, blockId: string, download: boolean, admin: boolean, slide?: number) {
+    // L’autorisation porte sur le bloc et sa version, même si le fichier est réutilisé ailleurs.
+    const version = { articleId, ...(admin ? {} : published) };
+    const sourceFields = { path: true, originalName: true } as const;
+    if (slide !== undefined) {
+      if (slide < 0 || slide >= 24) throw new NotFoundException();
+      const image = await this.prisma.articleBlockImage.findFirst({
+        where: { position: slide, block: { id: blockId, type: 'CAROUSEL', version }, media: { previewOf: pdfLibrary } },
+        select: { viewPdf: true, downloadPdf: true, media: { select: { previewOf: { select: sourceFields } } } },
+      });
+      if (!image?.media.previewOf || !(download ? image.downloadPdf : image.viewPdf)) throw new NotFoundException();
+      return image.media.previewOf;
+    }
+    const block = await this.prisma.articleBlock.findFirst({
+      where: {
+        id: blockId, version,
+        OR: [{ type: 'PDF', media: pdfLibrary }, { type: 'IMAGE', media: { previewOf: pdfLibrary } }],
+      },
+      select: { type: true, data: true, media: { select: { ...sourceFields, previewOf: { select: sourceFields } } } },
+    });
+    const data = block?.data as { pdf?: { display?: boolean; download?: boolean }; viewPdf?: boolean; downloadPdf?: boolean } | null | undefined;
+    if (block?.type === 'IMAGE') {
+      if (!block.media?.previewOf || (download ? data?.downloadPdf : data?.viewPdf) !== true) throw new NotFoundException();
+      return block.media.previewOf;
+    }
+    const settings = data?.pdf;
+    if (!block?.media || (download ? settings?.download : settings?.display) !== true) throw new NotFoundException();
+    return block.media;
+  }
+
+  async libraryPdf(id: string) {
+    const media = await this.prisma.media.findFirst({
+      where: { id, ...pdfLibrary }, select: { path: true, originalName: true },
+    });
+    if (!media) throw new NotFoundException();
+    return this.openPdf(media, false);
+  }
+
+  private async openPdf(media: Pick<Media, 'path' | 'originalName'>, download: boolean) {
+    const file = await open(this.resolve(media.path), 'r').catch(() => null);
+    if (!file) throw new NotFoundException();
+    try {
+      const stats = await file.stat();
+      if (!stats.isFile() || !stats.size) throw new NotFoundException();
+      return {
+        stream: file.createReadStream(), length: stats.size,
+        disposition: pdfDisposition(media.originalName ?? 'document.pdf', download),
+      };
+    } catch {
+      await file.close();
+      throw new NotFoundException();
+    }
+  }
+
+  private async storeContent(
+    actor: Principal,
+    file: { data: Buffer; extension: string; format: Media['format'] },
+    creation?: Pick<Media, 'type' | 'name'> & { altText?: string; originalName?: string; folderId?: string; previewOfId?: string },
+    id?: string,
+  ) {
+    const path = `content/${randomUUID()}.${file.extension}`;
     await mkdir(directory, { recursive: true, mode: 0o700 });
-    await writeFile(this.resolve(path), image.data, {
+    await writeFile(this.resolve(path), file.data, {
       flag: 'wx',
       mode: 0o600,
     });
-    let previous: string | undefined;
+    let result;
     try {
-      previous = await this.prisma.$transaction(async (tx) => {
+      result = await this.prisma.$transaction(async (tx) => {
         await lockAdmin(tx, this.sessions, actor);
         const data = {
           path,
-          format: image.format,
-          sizeBytes: BigInt(image.data.length),
+          format: file.format,
+          sizeBytes: BigInt(file.data.length),
         };
         if (!id) {
-          await lockMediaFolder(tx, folderId);
+          if (!creation) throw new BadRequestException();
+          await lockMediaFolder(tx, creation.folderId);
           const item = await tx.media.create({
             data: {
               ...data,
-              type: 'IMAGE',
-              name: dto!.nom.trim(),
-              altText: dto!.alt.trim(),
-              folderId,
+              ...creation,
             },
           });
           await contentLog(
@@ -321,9 +442,9 @@ export class MediaService {
             'MEDIA',
             item.id,
             'CREATE',
-            'Image importée.',
+            creation.type === 'PDF' ? 'Document PDF importé.' : 'Image importée.',
           );
-          return;
+          return { imported: this.presentLibraryItem(item) };
         }
         const item = await this.lock(tx, id);
         await tx.media.update({ where: { id }, data });
@@ -335,7 +456,7 @@ export class MediaService {
           'UPDATE',
           'Fichier image remplacé.',
         );
-        return item.path;
+        return { previous: item.path };
       });
     } catch (error) {
       // Une réponse de commit perdue ne doit pas faire supprimer un fichier référencé.
@@ -345,7 +466,8 @@ export class MediaService {
       if (stored === null) await this.remove(path);
       throw error;
     }
-    if (previous) await this.remove(previous);
+    if (result.previous) await this.remove(result.previous);
+    return result.imported;
   }
 
   update(actor: Principal, id: string, dto: MediaDto) {
@@ -353,13 +475,13 @@ export class MediaService {
     return this.prisma.$transaction(async (tx) => {
       await lockAdmin(tx, this.sessions, actor);
       const item = await this.lock(tx, id, true);
-      if (item.type === 'IMAGE' && !dto.alt.trim())
+      if (item.type === 'IMAGE' && !dto.decorative && !dto.alt.trim())
         throw new BadRequestException('Le texte alternatif est obligatoire.');
       await tx.media.update({
         where: { id },
         data: {
           name: dto.nom.trim(),
-          altText: item.type === 'IMAGE' ? dto.alt.trim() : null,
+          altText: item.type === 'IMAGE' ? (dto.decorative ? '' : dto.alt.trim()) : null,
         },
       });
       await contentLog(
@@ -374,24 +496,34 @@ export class MediaService {
   }
 
   async delete(actor: Principal, id: string) {
-    const path = await this.prisma.$transaction(async (tx) => {
+    const paths = await this.prisma.$transaction(async (tx) => {
       await lockAdmin(tx, this.sessions, actor);
       const item = await this.lock(tx, id, true);
       const usage = await tx.media.findUniqueOrThrow({
         where: { id },
         select: {
+          preview: {
+            select: {
+              path: true,
+              _count: { select: { profiles: true, articleCovers: true, articleBlocks: true, articleBlockImages: true, categoryVisuals: true, associationBlocks: true } },
+            },
+          },
           _count: {
             select: {
               profiles: true,
               articleCovers: true,
               articleBlocks: true,
+              articleBlockImages: true,
+              categoryVisuals: true,
               associationBlocks: true,
               trails: true,
             },
           },
         },
       });
-      if (Object.values(usage._count).some((count) => count > 0))
+      // L’aperçu d’un PDF est supprimé avec lui : ses usages bloquent donc aussi la suppression du PDF.
+      const counts = [usage._count, ...(usage.preview ? [usage.preview._count] : [])];
+      if (counts.some(count => Object.values(count).some(value => value > 0)))
         throw new ConflictException(
           'Ce média est utilisé et ne peut pas être supprimé.',
         );
@@ -406,28 +538,28 @@ export class MediaService {
         'MEDIA',
         id,
         'DELETE',
-        item.type === 'GPX' ? 'Fichier GPX supprimé.' : 'Image supprimée.',
+        item.type === 'IMAGE' ? 'Image supprimée.' : `Fichier ${item.type} supprimé.`,
       );
-      return item.path;
+      return [item.path, ...(usage.preview ? [usage.preview.path] : [])];
     });
-    await this.remove(path);
+    for (const path of paths) await this.remove(path);
   }
 
   private async lock(
     tx: Prisma.TransactionClient,
     id: string,
-    includeGpx = false,
+    includeLibrary = false,
   ) {
     await tx.$queryRaw`SELECT id FROM media WHERE id = ${id}::uuid FOR UPDATE`;
     const item = await tx.media.findFirst({
-      where: { id, OR: includeGpx ? [library, gpxLibrary] : [library] },
+      where: { id, OR: includeLibrary ? libraryTypes : [libraryByType.IMAGE] },
     });
     if (!item) throw new NotFoundException();
     return item;
   }
 
   private resolve(path: string) {
-    const filename = /^content\/([a-f0-9-]{36}\.(?:jpeg|png|webp))$/i.exec(
+    const filename = /^content\/([a-f0-9-]{36}\.(?:jpeg|png|webp|pdf))$/i.exec(
       path,
     )?.[1];
     if (!filename) throw new NotFoundException();
@@ -476,6 +608,7 @@ export class MediaService {
       tailleKo: Math.max(1, Math.round(Number(item.sizeBytes) / 1024)),
     };
     if (item.type === 'GPX') return { ...common, type: 'GPX' as const };
+    if (item.type === 'PDF') return { ...common, type: 'PDF' as const, originalName: item.originalName ?? item.name };
     return {
       ...this.present(item, true),
       ...common,
@@ -489,6 +622,8 @@ export class MediaService {
       id: item.id,
       nom: item.name,
       alt: item.altText ?? '',
+      ...(item.previewOfId ? { fromPdf: true, ...(admin ? { sourcePdfId: item.previewOfId } : {}) } : {}),
+      ...(item.altText === '' ? { decorative: true } : {}),
       format: Object.values(formats).find((format) => format.db === item.format)
         ?.display,
       tailleKo: Math.max(1, Math.round(Number(item.sizeBytes) / 1024)),

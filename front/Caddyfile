@@ -7,8 +7,19 @@
 	encode zstd gzip
 
 	@api path /api /api/*
+	@pdfUpload {
+		method POST
+		path /api/v1/admin/content/media/pdf
+	}
+	@otherApiRequests not {
+		method POST
+		path /api/v1/admin/content/media/pdf
+	}
 	handle @api {
-		request_body {
+		request_body @pdfUpload {
+			max_size 51MiB
+		}
+		request_body @otherApiRequests {
 			max_size 10MiB
 		}
 		reverse_proxy back:3000 {

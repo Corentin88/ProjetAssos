@@ -2,6 +2,8 @@
 
 La pile `projetassos-production` utilise des réseaux et des volumes distincts du développement. Caddy sert React et transmet `/api` à NestJS sur le même domaine. Seul Caddy publie des ports. PostgreSQL, NestJS et les médias restent sur les réseaux ou volumes Docker.
 
+Caddy peut renvoyer le document HTML de la SPA avec un statut HTTP 200 quand React affiche une page 404 ou 409. En cas de conflit sur le callback Google, une navigation qui préfère le HTML reçoit une redirection HTTP 303 vers `/#/erreur/409`. Un client qui attend du JSON reçoit un statut HTTP 409. Les autres réponses API conservent leur statut HTTP.
+
 ## Préparer l’hôte
 
 - Installer Docker Engine et le plugin Compose v2 sur un hôte Linux. Publier l’enregistrement DNS du domaine vers cet hôte. Ouvrir TCP 80 et 443, et UDP 443 pour HTTP/3. Caddy obtient et renouvelle automatiquement les certificats. Conserver ses volumes `/data` et `/config`.

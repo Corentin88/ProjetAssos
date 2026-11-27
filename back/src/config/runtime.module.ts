@@ -5,6 +5,11 @@ import { isIP } from 'node:net';
 
 config({ path: resolve(process.cwd(), '../.env'), quiet: true });
 
+const pdfMaxMib = Number(process.env.PDF_MAX_MIB ?? 20);
+if (!Number.isInteger(pdfMaxMib) || pdfMaxMib < 1 || pdfMaxMib > 50)
+  throw new Error('PDF_MAX_MIB doit être un entier compris entre 1 et 50.');
+export const pdfMaxBytes = pdfMaxMib * 1024 * 1024;
+
 @Injectable()
 export class RuntimeConfig {
   readonly production = process.env.NODE_ENV === 'production';

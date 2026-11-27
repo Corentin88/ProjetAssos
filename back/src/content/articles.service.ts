@@ -30,7 +30,7 @@ const articleInclude = {
   },
   versions: {
     include: {
-      blocks: { orderBy: { position: 'asc' } },
+      blocks: { orderBy: { position: 'asc' }, include: { slides: { orderBy: { position: 'asc' } } } },
       categories: {
         orderBy: [{ category: { name: 'asc' } }, { categoryId: 'asc' }],
       },
@@ -54,14 +54,30 @@ const frontendType = Object.fromEntries(
   Object.entries(blockTypes).map(([key, value]) => [value, key]),
 );
 
-export function presentBlocks(version: { blocks: Pick<Version['blocks'][number], 'id' | 'type' | 'data' | 'mediaId'>[] }, admin = false) {
+type PresentedBlock = Pick<Version['blocks'][number], 'id' | 'type' | 'data' | 'mediaId'> &
+  Partial<Pick<Version['blocks'][number], 'slides'>>;
+
+export function presentBlocks(version: { blocks: PresentedBlock[] }, admin = false) {
   return version.blocks.map((block) => {
     const mapBlock = storedMapBlock(block.type, block.data);
     if (mapBlock) return presentMapBlock(mapBlock, block.id, admin);
+    if (block.type === 'PDF') return {
+      ...(block.data as { text: string; pdf: { display: boolean; download: boolean; description?: string; presentation?: 'integrated' | 'link' } }),
+      id: block.id, type: 'pdf' as const, ...(admin ? { mediaId: block.mediaId ?? undefined } : {}),
+    };
+    if (block.type === 'CAROUSEL') return {
+      id: block.id,
+      type: frontendType[block.type],
+      slides: block.slides?.map(({ mediaId, alt, caption, viewPdf, downloadPdf }) => ({
+        mediaId, alt, caption: caption ?? undefined, ...(alt === '' ? { decorative: true } : {}),
+        ...(viewPdf ? { viewPdf: true } : {}), ...(downloadPdf ? { downloadPdf: true } : {}),
+      })) ?? [],
+    };
     return {
       ...(block.data as {
         text?: string;
         alt?: string;
+        decorative?: boolean;
         url?: string;
         items?: string[];
       }),
@@ -146,15 +162,21 @@ function youtubeLink(value: string) {
 }
 
 export function blockInput(block: BlockDto, position: number) {
-  if (block.type === 'randonnee' || block.type === 'localisation')
+  if (block.type === 'randonnee' || block.type === 'localisation' || block.type === 'carrousel' || block.type === 'pdf')
     throw new ContentInputError('Ce bloc est disponible dans les articles.');
   const type = blockTypes[block.type];
   const { text, items, alt, mediaId } = block;
   const url = block.url?.trim();
   if (type === 'IMAGE') {
-    if (!mediaId || !alt?.trim())
+    if (!mediaId || (!block.decorative && !alt?.trim()))
       throw new ContentInputError(`Bloc ${position + 1} : choisissez une image et renseignez son texte alternatif.`);
-    return { type, position, mediaId, data: { alt: alt.trim() } };
+    return { type, position, mediaId, data: {
+      alt: block.decorative ? '' : alt!.trim(),
+      ...(block.decorative ? { decorative: true } : {}),
+      ...(block.viewPdf ? { viewPdf: true } : {}),
+      ...(block.downloadPdf ? { downloadPdf: true } : {}),
+      ...(text === undefined ? {} : { text: text.trim() }),
+    } };
   }
   if (type === 'YOUTUBE' && url && !youtubeLink(url))
     throw new ContentInputError(`Bloc ${position + 1} : saisissez une adresse de vidéo YouTube valide.`);
@@ -177,6 +199,15 @@ export function blockInput(block: BlockDto, position: number) {
     ...(url !== undefined ? { url } : {}),
   };
   return { type, position, data };
+}
+
+export function carouselBlockInput(block: BlockDto, position: number) {
+  // Jusqu’ici les alternatives de carrousel devaient être non vides. La chaîne vide identifie une image décorative.
+  const slides = (block.slides ?? []).map(({ mediaId, alt, caption, decorative, viewPdf, downloadPdf }, index) => {
+    if (!decorative && !alt.trim()) throw new ContentInputError(`Bloc ${position + 1}, image ${index + 1} : renseignez le texte alternatif.`);
+    return { mediaId, position: index, alt: decorative ? '' : alt.trim(), caption: caption?.trim() || null, viewPdf, downloadPdf };
+  });
+  return { type: 'CAROUSEL' as const, position, slides: { create: slides } };
 }
 
 @Injectable()
@@ -507,6 +538,19 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
     const blocks = dto.blocks.map((block, position) => {
       if (block.type === 'localisation' || block.type === 'randonnee')
         return mapBlockInput(block, position, previews.get(block.mediaId ?? '') ?? null);
+      if (block.type === 'carrousel') return carouselBlockInput(block, position);
+      if (block.type === 'pdf') {
+        const text = block.text?.trim();
+        const display = block.pdf?.display ?? true;
+        const download = block.pdf?.download ?? true;
+        if (!block.mediaId || !text || Array.from(text).length > 255 || (!display && !download))
+          throw new ContentInputError(`Bloc ${position + 1} : choisissez un PDF, donnez-lui un titre de 255 caractères maximum et activez au moins un accès.`);
+        return {
+          type: 'PDF' as const, position, mediaId: block.mediaId,
+          data: { text, pdf: { display, download, description: block.pdf?.description?.trim() ?? '',
+            ...(block.pdf?.presentation ? { presentation: block.pdf.presentation } : {}) } },
+        };
+      }
       return blockInput(block, position);
     });
     return {
@@ -524,7 +568,10 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
   private async verifyMedia(tx: Prisma.TransactionClient, dto: ArticleDto) {
     const ids = [
       ...new Set(
-        [dto.coverMediaId, ...dto.blocks.filter(block => block.type !== 'randonnee').map(block => block.mediaId)].filter(
+        [dto.coverMediaId, ...dto.blocks.flatMap(block => {
+          if (block.type === 'carrousel') return (block.slides ?? []).map(slide => slide.mediaId);
+          return block.type === 'randonnee' || block.type === 'pdf' ? [] : [block.mediaId];
+        })].filter(
           (id): id is string => Boolean(id),
         ),
       ),
@@ -541,6 +588,10 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
     ) {
       throw new ContentInputError('Une image sélectionnée est indisponible. Remplacez-la ou retirez-la.');
     }
+    const pdfIds = [...new Set(dto.blocks.flatMap(block => block.type === 'pdf' && block.mediaId ? [block.mediaId] : []))];
+    if (pdfIds.length && pdfIds.length !== await tx.media.count({
+      where: { id: { in: pdfIds }, type: 'PDF', format: 'PDF', path: { startsWith: 'content/' } },
+    })) throw new ContentInputError('Un document PDF sélectionné est indisponible. Remplacez-le ou retirez son bloc.');
   }
 
   private validateVersion(version?: Version) {
@@ -553,6 +604,8 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
       if (mapBlock?.kind === 'localisation' && (mapBlock.location.latitude == null || mapBlock.location.longitude == null))
         throw new ContentInputError(`Bloc ${block.position + 1} : placez le marqueur en recherchant l’adresse ou en saisissant les coordonnées.`);
       const data = block.data as { url?: string };
+      if (block.type === 'CAROUSEL' && block.slides.length < 2)
+        throw new ContentInputError(`Bloc ${block.position + 1} : ajoutez au moins deux images au carrousel.`);
       if (block.type === 'YOUTUBE' && !data.url?.trim())
         throw new ContentInputError(`Bloc ${block.position + 1} : renseignez l’adresse de la vidéo YouTube.`);
       if (block.type === 'LINK' && !data.url?.trim())

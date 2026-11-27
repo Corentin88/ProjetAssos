@@ -7,7 +7,9 @@ import {
   Get,
   HttpCode,
   Module,
+  NotFoundException,
   Param,
+  ParseIntPipe,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -36,6 +38,7 @@ import {
   ArticleActionDto,
   ArticleDto,
   CarouselDto,
+  ClassificationDto,
   MediaDto,
   MediaClassificationDto,
   MediaFolderDto,
@@ -44,7 +47,11 @@ import {
   NamedDto,
 } from './content.dto.js';
 import { contentLog, contentSlug, lockAdmin } from './content.shared.js';
+import { ContentInputError } from './content-input.error.js';
 import { MediaService } from './media.service.js';
+import { pdfMaxBytes } from '../config/runtime.module.js';
+import { pdfMime } from './pdf-document.js';
+import type { PdfUpload } from './pdf-document.js';
 import { gpxSizeLimit, parseGpxUpload, TrailsService } from './trails.js';
 import { AddressSearchDto } from './map-blocks.dto.js';
 import { searchAddress } from './location-search.js';
@@ -66,12 +73,12 @@ function snapshot(
       } as const;
       const items = await articles.list(admin, tx);
       const categories = await tx.category.findMany({
-        select,
+        select: { ...select, icon: true, visualMediaId: true },
         orderBy: { name: 'asc' },
       });
       const tags = await tx.tag.findMany({ select, orderBy: { name: 'asc' } });
       const medias = await media.list(admin, tx);
-      const classify = (item: (typeof categories)[number]) => ({
+      const classify = (item: (typeof tags)[number]) => ({
         id: item.id,
         nom: item.name,
         slug: item.slug,
@@ -84,9 +91,13 @@ function snapshot(
             }
           : {}),
       });
+      const visibleCategories = new Set(items.flatMap(article => article.categorieIds));
       return {
         articles: items,
-        categories: categories.map(classify),
+        categories: categories.map(item => ({
+          ...classify(item),
+          visual: admin || visibleCategories.has(item.id) ? categoryVisual(item) : null,
+        })),
         tags: tags.map(classify),
         medias,
       };
@@ -96,6 +107,24 @@ function snapshot(
       timeout: 15000,
     },
   );
+}
+
+function pdfDownload(mode: string) {
+  if (mode !== 'view' && mode !== 'download') throw new NotFoundException();
+  return mode === 'download';
+}
+
+function pdfResponse(file: Awaited<ReturnType<MediaService['articlePdf']>>) {
+  return new StreamableFile(file.stream, { type: pdfMime, length: file.length, disposition: file.disposition });
+}
+
+async function articlePdfResponse(media: MediaService, id: string, blockId: string, mode: string, admin: boolean, slide?: number, page?: number) {
+  if (mode === 'info' || mode === 'page') {
+    if (mode === 'page' && page === undefined) throw new BadRequestException();
+    const result = await media.articlePdfRaster(id, blockId, admin, mode === 'page' ? page : undefined, slide);
+    return Buffer.isBuffer(result) ? new StreamableFile(result, { type: 'image/png' }) : result;
+  }
+  return pdfResponse(await media.articlePdf(id, blockId, pdfDownload(mode), admin, slide));
 }
 
 @Controller()
@@ -116,6 +145,12 @@ class PublicContentController {
   async image(@Param('id', ParseUUIDPipe) id: string) {
     const file = await this.media.file(id, false);
     return new StreamableFile(file.data, { type: file.mime });
+  }
+
+  @Get('articles/:id/blocks/:blockId/pdf/:mode')
+  articlePdf(@Param('id', ParseUUIDPipe) id: string, @Param('blockId', ParseUUIDPipe) blockId: string, @Param('mode') mode: string,
+    @Query('slide', new ParseIntPipe({ optional: true })) slide?: number, @Query('page', new ParseIntPipe({ optional: true })) page?: number) {
+    return articlePdfResponse(this.media, id, blockId, mode, false, slide, page);
   }
 
   @Get('articles/:id/gpx')
@@ -151,6 +186,12 @@ class PublicContentController {
 }
 
 type Classification = 'categories' | 'tags';
+function categoryVisual(category: { icon: string | null; visualMediaId: string | null }) {
+  if (category.icon) return { icon: category.icon };
+  if (category.visualMediaId) return { mediaId: category.visualMediaId };
+  return null;
+}
+
 function classification(kind: string): Classification {
   if (kind !== 'categories' && kind !== 'tags') throw new BadRequestException();
   return kind;
@@ -160,9 +201,9 @@ const uploadOptions = {
   limits: {
     fileSize: 8 * 1024 * 1024,
     files: 1,
-    fields: 2,
+    fields: 3,
     fieldSize: 4096,
-    parts: 4,
+    parts: 5,
   },
 };
 const gpxUploadOptions = {
@@ -220,9 +261,9 @@ class AdminContentController {
   createClassification(
     @CurrentUser() actor: Principal,
     @Param('kind') kind: string,
-    @Body() dto: NamedDto,
+    @Body() dto: ClassificationDto,
   ) {
-    return this.classify(actor, classification(kind), dto.nom);
+    return this.classify(actor, classification(kind), dto);
   }
 
   @Patch('classification/:kind/:id')
@@ -230,9 +271,9 @@ class AdminContentController {
     @CurrentUser() actor: Principal,
     @Param('kind') kind: string,
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: NamedDto,
+    @Body() dto: ClassificationDto,
   ) {
-    return this.classify(actor, classification(kind), dto.nom, id);
+    return this.classify(actor, classification(kind), dto, id);
   }
 
   @Delete('classification/:kind/:id')
@@ -316,8 +357,30 @@ class AdminContentController {
     return new StreamableFile(file.data, { type: file.mime });
   }
 
+  @Get('media/:id/pdf')
+  async libraryPdf(@Param('id', ParseUUIDPipe) id: string) {
+    return pdfResponse(await this.media.libraryPdf(id));
+  }
+
+  @Get('articles/:id/blocks/:blockId/pdf/:mode')
+  articlePdf(@Param('id', ParseUUIDPipe) id: string, @Param('blockId', ParseUUIDPipe) blockId: string, @Param('mode') mode: string,
+    @Query('slide', new ParseIntPipe({ optional: true })) slide?: number, @Query('page', new ParseIntPipe({ optional: true })) page?: number) {
+    return articlePdfResponse(this.media, id, blockId, mode, true, slide, page);
+  }
+
+  @Post('media/:id/pdf-visual')
+  pdfVisual(@CurrentUser() actor: Principal, @Param('id', ParseUUIDPipe) id: string) {
+    return this.media.pdfVisual(actor, id);
+  }
+
+  @Post('media/pdf')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: pdfMaxBytes + 1, files: 1, fields: 1, fieldSize: 4096, parts: 3 } }))
+  uploadPdf(@CurrentUser() actor: Principal, @UploadedFile() file: PdfUpload, @Body() dto: NamedDto,
+    @Query('folderId', new ParseUUIDPipe({ optional: true })) folderId?: string) {
+    return this.media.uploadPdf(actor, file, dto, folderId);
+  }
+
   @Post('media')
-  @HttpCode(204)
   @UseInterceptors(FileInterceptor('image', uploadOptions))
   upload(
     @CurrentUser() actor: Principal,
@@ -404,11 +467,14 @@ class AdminContentController {
   private classify(
     actor: Principal,
     kind: Classification,
-    label: string,
+    dto: ClassificationDto,
     id?: string,
   ) {
-    const name = label.trim();
+    const name = dto.nom.trim();
     if (!name) throw new BadRequestException();
+    if (dto.visual !== undefined && kind !== 'categories') throw new BadRequestException();
+    if (dto.visual && Boolean(dto.visual.icon) === Boolean(dto.visual.mediaId))
+      throw new ContentInputError('Choisissez une icône ou une image pour la catégorie.');
     return this.prisma.$transaction(async (tx) => {
       await lockAdmin(tx, this.sessions, actor);
       // Deux administrateurs peuvent créer un même libellé en parallèle.
@@ -418,14 +484,25 @@ class AdminContentController {
       const duplicates = kind === 'categories' ? await tx.category.count({ where }) : await tx.tag.count({ where });
       if (duplicates) throw new ConflictException();
       const slug = contentSlug(name);
-      const item =
-        kind === 'categories'
-          ? id
-            ? await tx.category.update({ where: { id }, data: { name } })
-            : await tx.category.create({ data: { name, slug } })
-          : id
-            ? await tx.tag.update({ where: { id }, data: { name } })
-            : await tx.tag.create({ data: { name, slug } });
+      const visual = dto.visual === undefined ? {} : {
+        icon: dto.visual?.icon ?? null,
+        visualMediaId: dto.visual?.mediaId ?? null,
+      };
+      if (visual.visualMediaId && !(await tx.media.findFirst({
+        where: { id: visual.visualMediaId, type: 'IMAGE', path: { startsWith: 'content/' } },
+        select: { id: true },
+      }))) throw new ContentInputError('L’image sélectionnée est indisponible.');
+      let item: { id: string; name: string; slug: string; visual?: ReturnType<typeof categoryVisual> };
+      if (kind === 'categories') {
+        const category = id
+          ? await tx.category.update({ where: { id }, data: { name, ...visual } })
+          : await tx.category.create({ data: { name, slug, ...visual } });
+        item = { ...category, visual: categoryVisual(category) };
+      } else {
+        item = id
+          ? await tx.tag.update({ where: { id }, data: { name } })
+          : await tx.tag.create({ data: { name, slug } });
+      }
       await contentLog(
         tx,
         actor.userId,
@@ -434,7 +511,7 @@ class AdminContentController {
         id ? 'UPDATE' : 'CREATE',
         'Classement enregistré.',
       );
-      return { id: item.id, nom: item.name, slug: item.slug };
+      return { id: item.id, nom: item.name, slug: item.slug, visual: item.visual };
     });
   }
 }

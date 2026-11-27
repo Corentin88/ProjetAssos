@@ -1,20 +1,24 @@
 import { useEffect, useRef, useState } from 'react'
-import { FolderPlus, Import, Route } from 'lucide-react'
+import { FileText, FolderPlus, Import, Route } from 'lucide-react'
 import type { FormEvent } from 'react'
 import type { LibraryDetails, LibraryItem } from '../../types'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
 import { FolderOptions, folderPath, MediaLibrary, useMediaLibrary } from '../../components/admin/MediaLibrary'
+import { MediaImport, imageFormats } from '../../components/admin/MediaImport'
+import { ImageAlternativeField } from '../../components/admin/ImageAlternativeField'
 import { QuickClassification } from '../../components/admin/QuickClassification'
 import { ContentImage } from '../../components/content/ContentImage'
+import { PdfActions } from '../../components/content/PdfActions'
 import { Alert } from '../../components/ui/feedback'
-import { Button, Field, Input, Select, Textarea } from '../../components/ui/form'
+import { Button, Field, Input, Select } from '../../components/ui/form'
 import { Modal } from '../../components/ui/overlay'
 import { ApiError, authErrorMessage, protectedRequest } from '../../lib/auth'
 import { useResource } from '../../lib/community'
-import { removeMedia, replaceMedia, saveMediaClassification, saveMediaMetadata, uploadMedia } from '../../lib/content'
+import { createMediaFolder, removeMedia, replaceMedia, saveMediaClassification, saveMediaMetadata } from '../../lib/content'
 import { useDb } from '../../lib/db'
 import { formatDate, formatTaille } from '../../lib/format'
 import { useToast } from '../../hooks/useToast'
+import { imageAlternative } from '../../lib/imageAlternative'
 
 type Action = 'import' | 'create-folder' | 'rename-folder' | 'delete-folder' | 'move' | 'edit' | 'replace' | 'delete' | 'classify'
 const titles: Record<Action, string> = {
@@ -30,7 +34,6 @@ const titles: Record<Action, string> = {
 }
 
 const libraryUrl = '/admin/content'
-const imageFormats = 'image/jpeg,image/png,image/webp'
 const folderName = 'Non classés'
 
 export function MediasAdmin() {
@@ -89,10 +92,10 @@ export function MediasAdmin() {
 
   const item = details.data
   const usage = item?.usage
-  const used = Boolean(usage && (usage.articles.length || usage.avatars || usage.association || usage.trails))
+  const used = Boolean(usage && (usage.articles.length || usage.avatars || usage.association || usage.trails || usage.categoryVisuals?.length))
 
   return <>
-    <AdminPageHead titre="Médiathèque" description="Images et fichiers GPX réutilisables.">
+    <AdminPageHead titre="Médiathèque" description="Images, documents PDF et fichiers GPX réutilisables.">
       <Button onClick={() => setOperation({ action: 'import' })}><Import aria-hidden="true" className="h-5 w-5" /> Importer</Button>
     </AdminPageHead>
     <div className="mx-auto grid max-w-6xl gap-5 px-4 pb-8 md:px-8">
@@ -122,12 +125,13 @@ export function MediasAdmin() {
           {item.type === 'IMAGE'
             ? <ContentImage src={item.file} alt={item.alt} className="max-h-64 w-full rounded-xl bg-sand object-contain" />
             : <div className="grid min-h-24 place-items-center rounded-xl bg-sand">
-                <Route aria-hidden="true" className="h-12 w-12 text-forest" />
+                {item.type === 'PDF' ? <FileText aria-hidden="true" className="h-12 w-12 text-forest" /> : <Route aria-hidden="true" className="h-12 w-12 text-forest" />}
               </div>}
           <div className="min-w-0">
             <h3 className="break-all font-bold">{item.nom}</h3>
             <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
-              <dt>Type</dt><dd>{item.type === 'IMAGE' ? `Image · ${item.format}` : 'Parcours GPX'}</dd>
+              <dt>Type</dt><dd>{item.type === 'IMAGE' ? `Image · ${item.format}` : item.type === 'PDF' ? 'Document PDF' : 'Parcours GPX'}</dd>
+              {item.type === 'PDF' && item.originalName !== item.nom && <><dt>Nom original</dt><dd className="break-words">{item.originalName}</dd></>}
               <dt>Taille</dt><dd>{formatTaille(item.tailleKo)}</dd>
               <dt>Ajout</dt><dd>{formatDate(item.createdAt)}</dd>
               <dt>Dossier</dt><dd className="break-all">{item.folderId ? folderPath(library.byId, item.folderId).map(folder => folder.name).join(' / ') || 'Dossier indisponible' : folderName}</dd>
@@ -136,14 +140,16 @@ export function MediasAdmin() {
               {item.type === 'IMAGE' && item.largeur > 0 && item.hauteur > 0 && <>
                 <dt>Dimensions</dt><dd>{item.largeur} × {item.hauteur} px</dd>
               </>}
-              {item.type === 'IMAGE' && item.alt && <><dt>Texte alternatif</dt><dd className="break-words">{item.alt}</dd></>}
+              {item.type === 'IMAGE' && (item.alt || item.decorative) && <><dt>Texte alternatif</dt><dd className="break-words">{item.decorative ? 'Image décorative' : item.alt}</dd></>}
               <dt>Utilisation</dt><dd className="break-words">{!used ? 'Aucune référence détectée' : [
                 item.usage.articles.length ? `Articles : ${item.usage.articles.join(', ')}` : '',
+                item.usage.categoryVisuals?.length ? `Visuels de catégorie : ${item.usage.categoryVisuals.join(', ')}` : '',
                 item.usage.association ? 'Page L’association' : '',
                 item.usage.avatars ? `${item.usage.avatars} avatar(s)` : '',
                 item.usage.trails ? `${item.usage.trails} référence(s) de randonnée` : '',
               ].filter(Boolean).join(' · ')}</dd>
             </dl>
+            {item.type === 'PDF' && <div className="mt-4"><PdfActions title={item.nom} viewPath={`${libraryUrl}/media/${item.id}/pdf`} secure /></div>}
             <div className="mt-4 flex flex-wrap gap-2">
               <Button variant="secondaire" size="petit" onClick={() => setOperation({ action: 'edit' })}>Modifier</Button>
               <Button variant="secondaire" size="petit" onClick={() => setOperation({ action: 'classify' })}>Catégories et tags</Button>
@@ -157,21 +163,11 @@ export function MediasAdmin() {
       </section>}
       <MediaLibrary library={library} activeId={activeId} selected={selected} onOpen={openItem} onToggle={toggle} />
     </div>
-    {operation && <MediaAction operation={operation} library={library} item={item}
-      onDone={afterWrite} onClose={() => setOperation(undefined)} />}
+    {operation?.action === 'import' ? <MediaImport library={library} type="ALL"
+      onClose={() => setOperation(undefined)} onFinished={complete => complete ? afterWrite('import') : results.refresh()} />
+      : operation && <MediaAction operation={operation} library={library} item={item}
+        onDone={afterWrite} onClose={() => setOperation(undefined)} />}
   </>
-}
-
-type ImportEntry = { file: File; name: string; alt: string; gpx: boolean; done?: boolean; error?: string }
-
-function ImportPreview({ file }: { file: File }) {
-  const [url, setUrl] = useState<string>()
-  useEffect(() => {
-    const nextUrl = URL.createObjectURL(file)
-    setUrl(nextUrl)
-    return () => URL.revokeObjectURL(nextUrl)
-  }, [file])
-  return <img src={url} alt="" loading="lazy" className="h-20 w-28 rounded-lg bg-sand object-contain" />
 }
 
 function MediaAction({ operation, library, item, onClose, onDone }: {
@@ -187,43 +183,13 @@ function MediaAction({ operation, library, item, onClose, onDone }: {
   const [tagIds, setTagIds] = useState(item?.tagIds ?? [])
   const [folder] = useState(library.current)
   const [name, setName] = useState((action === 'edit' ? item?.nom : action === 'rename-folder' ? folder?.name : '') ?? '')
-  const [alt, setAlt] = useState(item?.type === 'IMAGE' ? item.alt : '')
+  const [alt, setAlt] = useState(item?.type === 'IMAGE' ? imageAlternative(item).alt : '')
+  const [decorative, setDecorative] = useState(item?.type === 'IMAGE' && item.decorative === true)
   const [destination, setDestination] = useState(item?.folderId && ids?.length === 1 ? item.folderId : '')
   const [file, setFile] = useState<File>()
-  const [imports, setImports] = useState<ImportEntry[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const destructive = action === 'delete' || action === 'delete-folder'
-
-  async function uploadEntries() {
-    const failed = imports.find(entry => !entry.done && !entry.gpx && !entry.alt.trim())
-    if (failed) {
-      setError(`Renseignez le texte alternatif de « ${failed.file.name} ».`)
-      return false
-    }
-    let failures = 0
-    for (const [index, entry] of imports.entries()) {
-      if (entry.done) continue
-      try {
-        if (entry.gpx) {
-          const form = new FormData()
-          form.set('file', entry.file)
-          await protectedRequest(`${libraryUrl}/gpx${folder ? `?folderId=${folder.id}` : ''}`, 'POST', form)
-        } else {
-          await uploadMedia(entry.file, entry.name.trim() || entry.file.name, entry.alt.trim(), folder?.id)
-        }
-        setImports(entries => entries.map((value, i) => i === index ? { ...value, done: true, error: undefined } : value))
-      } catch (reason) {
-        failures += 1
-        setImports(entries => entries.map((value, i) => i === index ? { ...value, error: authErrorMessage(reason) } : value))
-      }
-    }
-    if (failures) {
-      setError(`${failures} fichier(s) en échec. Corrigez les erreurs puis relancez l’import.`)
-      await library.results.refresh()
-    }
-    return failures === 0
-  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -232,11 +198,8 @@ function MediaAction({ operation, library, item, onClose, onDone }: {
     setError('')
     try {
       switch (action) {
-        case 'import':
-          if (!await uploadEntries()) return
-          break
         case 'create-folder':
-          await protectedRequest(`${libraryUrl}/media-folders`, 'POST', { nom: name.trim(), parentId: folder?.id })
+          await createMediaFolder(name.trim(), folder?.id)
           break
         case 'rename-folder':
           await protectedRequest(`${libraryUrl}/media-folders/${folder?.id}`, 'PATCH', { nom: name.trim() })
@@ -248,7 +211,7 @@ function MediaAction({ operation, library, item, onClose, onDone }: {
           await protectedRequest(`${libraryUrl}/media/move`, 'PATCH', { ids, folderId: destination || null })
           break
         case 'edit':
-          if (item) await saveMediaMetadata(item.id, name.trim(), alt.trim())
+          if (item) await saveMediaMetadata(item.id, name.trim(), alt.trim(), decorative)
           break
         case 'classify':
           if (item) await saveMediaClassification(item.id, categorieIds, tagIds)
@@ -275,37 +238,12 @@ function MediaAction({ operation, library, item, onClose, onDone }: {
       {error && <Alert kind="erreur" title="Action incomplète">{error}</Alert>}
       <fieldset disabled={busy} aria-busy={busy} className="mt-3 flex min-w-0 flex-col gap-4">
         <legend className="sr-only">{titles[action]}</legend>
-        {action === 'import' && <>
-          <Field label="Fichiers à importer" htmlFor="media-import" hint="JPEG, PNG et WebP, 8 Mio maximum par image. GPX, 5 Mio maximum.">
-            <Input id="media-import" type="file" multiple accept={`${imageFormats},.gpx,application/gpx+xml`}
-              onChange={event => setImports(Array.from(event.target.files ?? [], file => ({
-                file, name: file.name, alt: '', gpx: /\.gpx$/i.test(file.name) || file.type === 'application/gpx+xml',
-              })))} />
-          </Field>
-          <p className="break-words text-mist">Dossier de destination · {folder?.name ?? folderName}</p>
-          {imports.map((entry, index) => <div key={index} className="grid min-w-0 gap-3 rounded-xl border border-line p-3">
-            <p className="break-all font-bold">{entry.file.name}</p>
-            {entry.done ? <p role="status">Importé</p> : !entry.gpx && <>
-              <ImportPreview file={entry.file} />
-              <Field label="Nom affiché" htmlFor={`import-name-${index}`}>
-                <Input id={`import-name-${index}`} maxLength={255} value={entry.name}
-                  onChange={event => setImports(entries => entries.map((value, i) => i === index ? { ...value, name: event.target.value } : value))} />
-              </Field>
-              <Field label="Texte alternatif" htmlFor={`import-alt-${index}`} required>
-                <Textarea id={`import-alt-${index}`} maxLength={1000} required rows={2} value={entry.alt}
-                  onChange={event => setImports(entries => entries.map((value, i) => i === index ? { ...value, alt: event.target.value } : value))} />
-              </Field>
-            </>}
-            {entry.error && <p role="alert" className="text-brique">{entry.error}</p>}
-          </div>)}
-        </>}
         {(action === 'edit' || action === 'create-folder' || action === 'rename-folder') && <Field
           label={action === 'edit' ? 'Nom du fichier' : 'Nom du dossier'} htmlFor="media-name" required>
           <Input id="media-name" required maxLength={255} value={name} onChange={event => setName(event.target.value)} />
         </Field>}
-        {action === 'edit' && item?.type === 'IMAGE' && <Field label="Texte alternatif" htmlFor="media-alt" required>
-          <Textarea id="media-alt" required maxLength={1000} rows={3} value={alt} onChange={event => setAlt(event.target.value)} />
-        </Field>}
+        {action === 'edit' && item?.type === 'IMAGE' && <ImageAlternativeField id="media-alt" alt={alt} decorative={decorative}
+          onAltChange={setAlt} onDecorativeChange={setDecorative} multiline />}
         {action === 'classify' && ([
           { kind: 'categories', label: 'Catégories', choices: categories, ids: categorieIds, update: setCategorieIds },
           { kind: 'tags', label: 'Tags', choices: tags, ids: tagIds, update: setTagIds },
@@ -336,9 +274,9 @@ function MediaAction({ operation, library, item, onClose, onDone }: {
         <div className="flex flex-wrap justify-end gap-2">
           <Button variant="blanc" onClick={onClose}>Annuler</Button>
           <Button type="submit" variant={destructive ? 'danger' : 'primaire'}
-            disabled={busy || (action === 'import' && !imports.some(entry => !entry.done)) || (action === 'replace' && !file)}>
-            {busy ? action === 'import' ? 'Import en cours…' : 'Enregistrement…' : destructive ? 'Confirmer la suppression'
-              : action === 'import' ? 'Importer' : action === 'move' ? 'Déplacer' : 'Enregistrer'}
+            disabled={busy || (action === 'replace' && !file)}>
+            {busy ? 'Enregistrement…' : destructive ? 'Confirmer la suppression'
+              : action === 'move' ? 'Déplacer' : 'Enregistrer'}
           </Button>
         </div>
       </fieldset>

@@ -53,6 +53,7 @@ services:
       NODE_OPTIONS: "--import=/app/docker/database-url.mjs"
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
       API_ORIGIN: ${API_ORIGIN:-http://localhost:3000}
+      PDF_MAX_MIB: ${PDF_MAX_MIB:-20}
       FRONT_ORIGIN: ${FRONT_ORIGIN:-http://localhost:5173}
       SMTP_URL: ${SMTP_URL:-}
       MAIL_FROM: ${MAIL_FROM:-}
