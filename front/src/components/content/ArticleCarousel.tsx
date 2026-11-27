@@ -59,7 +59,7 @@ export function ArticleCarousel({ articles }: { articles: Article[] }) {
       >
         <div className="relative h-44 overflow-hidden bg-leaf-pale sm:h-60 md:h-auto">
           {cover ? (
-            <img src={mediaUrl(cover.file)} alt="" className="absolute inset-0 h-full w-full object-cover" />
+            <img src={mediaUrl(cover.file)} alt="" className={`absolute inset-0 h-full w-full ${cover.fromPdf ? 'bg-sand object-contain' : 'object-cover'}`} />
           ) : (
             <span className="absolute inset-0 grid place-items-center" aria-hidden="true">
               <Newspaper className="h-14 w-14 text-forest/30" />

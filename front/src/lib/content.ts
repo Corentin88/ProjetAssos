@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import { useToast } from '../hooks/useToast'
-import type { Article, Block, Category } from '../types'
+import type { Article, Block, Category, CategoryVisual, LibraryImage, LibraryPdf, Media, MediaFolder } from '../types'
 import { ApiError, apiUrl, authErrorMessage, protectedRequest } from './auth'
 import { setContent, setContentError } from './db'
 import type { ContentSnapshot } from './db'
@@ -61,10 +61,15 @@ function articlePayload(input: ArticleInput) {
     ...input,
     // Le parcours historique est inclus dans les blocs transmis par l’éditeur.
     trail: null,
-    blocks: input.blocks.map(({ type, text, url, mediaId, alt, items, trail, visibility, mapSettings, location }: Block) => ({
-      type, text, url, mediaId, alt, items: items?.filter(item => item.trim() !== ''), trail, visibility, mapSettings, location,
+    blocks: input.blocks.map(({ type, text, url, mediaId, alt, decorative, items, slides, pdf, trail, visibility, mapSettings, location, viewPdf, downloadPdf }: Block) => ({
+      type, text, url, mediaId, alt: decorative ? '' : alt, decorative, items: items?.filter(item => item.trim() !== ''),
+      slides: slides?.map(slide => slide.decorative ? { ...slide, alt: '' } : slide), pdf, trail, visibility, mapSettings, location, viewPdf, downloadPdf,
     })),
   }
+}
+
+export function preparePdfVisual(id: string) {
+  return protectedRequest<Media>(`/admin/content/media/${id}/pdf-visual`, 'POST')
 }
 
 export function saveArticle(input: ArticleInput, id?: string) {
@@ -83,8 +88,8 @@ export function articleAction(id: string, action: Action, options?: { at?: strin
     .then(result => 'deleted' in result ? null : result)
 }
 
-export function saveClassification(kind: 'categories' | 'tags', nom: string, id?: string) {
-  return mutate<Category>(`/classification/${kind}${id ? `/${id}` : ''}`, id ? 'PATCH' : 'POST', { nom })
+export function saveClassification(kind: 'categories' | 'tags', nom: string, id?: string, visual?: CategoryVisual | null) {
+  return mutate<Category>(`/classification/${kind}${id ? `/${id}` : ''}`, id ? 'PATCH' : 'POST', { nom, visual })
 }
 
 export function saveMediaClassification(id: string, categorieIds: string[], tagIds: string[]) {
@@ -95,12 +100,27 @@ export function deleteClassification(kind: 'categories' | 'tags', id: string) {
   return mutate(`/classification/${kind}/${id}`, 'DELETE', { confirmed: true })
 }
 
-export function uploadMedia(image: File, nom: string, alt: string, folderId?: string) {
+export function createMediaFolder(nom: string, parentId?: string) {
+  return protectedRequest<MediaFolder>('/admin/content/media-folders', 'POST', { nom, parentId })
+}
+
+export function uploadMedia(image: File, nom: string, alt: string, folderId?: string, decorative?: boolean) {
   const form = new FormData()
   form.set('image', image)
   form.set('nom', nom)
-  form.set('alt', alt)
-  return protectedRequest(`/admin/content/media${folderId ? `?folderId=${folderId}` : ''}`, 'POST', form)
+  form.set('alt', decorative ? '' : alt)
+  if (decorative) form.set('decorative', 'true')
+  return protectedRequest<LibraryImage>(`/admin/content/media${folderId ? `?folderId=${folderId}` : ''}`, 'POST', form)
+}
+
+export const pdfTransferTimeoutMs = 5 * 60_000
+
+export function uploadPdf(file: File, nom: string, folderId?: string) {
+  const form = new FormData()
+  const typedFile = !file.type || file.type === 'application/octet-stream' ? new Blob([file], { type: 'application/pdf' }) : file
+  form.set('file', typedFile, file.name)
+  form.set('nom', nom)
+  return protectedRequest<LibraryPdf>(`/admin/content/media/pdf${folderId ? `?folderId=${folderId}` : ''}`, 'POST', form, false, pdfTransferTimeoutMs)
 }
 
 export function replaceMedia(id: string, image: File) {
@@ -109,8 +129,8 @@ export function replaceMedia(id: string, image: File) {
   return mutate(`/media/${id}/replace`, 'POST', form)
 }
 
-export function saveMediaMetadata(id: string, nom: string, alt: string) {
-  return mutate(`/media/${id}`, 'PATCH', { nom, alt })
+export function saveMediaMetadata(id: string, nom: string, alt: string, decorative?: boolean) {
+  return mutate(`/media/${id}`, 'PATCH', { nom, alt: decorative ? '' : alt, decorative })
 }
 
 export function removeMedia(id: string) {

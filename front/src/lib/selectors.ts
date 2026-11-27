@@ -44,10 +44,18 @@ export function getMedia(id: string | null | undefined): Media | undefined {
 /** Visuel d'un article : couverture choisie > première image de l'article >
  *  visuel par défaut (§22) */
 export function articleCoverMediaId(article: Article): string | null {
-  if (article.coverMediaId) return article.coverMediaId
-  const blocks = publicBlocks(article)
-  const imgBlock = blocks.find((b) => b.type === 'image' && b.mediaId)
-  return imgBlock?.mediaId ?? getMedia('m-visuel-defaut')?.id ?? null
+  return article.coverMediaId ?? firstArticleImage(publicBlocks(article)) ?? getMedia('m-visuel-defaut')?.id ?? null
+}
+
+export function firstArticleImage(blocks: Block[]) {
+  for (const block of blocks) {
+    if (block.type === 'image' && block.mediaId) return block.mediaId
+    if (block.type === 'carrousel' && block.slides?.length) return block.slides[0].mediaId
+  }
+}
+
+export function articleExcerpt(blocks: Block[]) {
+  return blocks.find(block => block.type === 'paragraphe' && block.text)?.text?.slice(0, 220) ?? ''
 }
 
 export function getUser(id: string | null | undefined): User | undefined {

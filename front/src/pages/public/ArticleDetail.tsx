@@ -1,11 +1,13 @@
 import { articleCategoryLink } from '../../components/content/ArticleCategories'
+import { CategoryVisualMark } from '../../components/content/CategoryVisualMark'
 import { useCurrentUser } from '../../lib/auth'
 import type { Comment } from '../../types'
 import { isDeletedComment, useResource } from '../../lib/community'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { ArrowLeft, CalendarDays, Eye, MessageCircle, PencilLine, User } from 'lucide-react'
 import { useDb } from '../../lib/db'
+import { ensureContent } from '../../lib/content'
 import {
   articleAuthorLabel,
   articleCoverMediaId,
@@ -20,10 +22,11 @@ import { mediaUrl } from '../../lib/assets'
 import { BlockRenderer } from '../../components/content/BlockRenderer'
 import { TrailDetails } from '../../components/content/TrailDetails'
 import { CommentsSection } from '../../components/content/Comments'
-import { Alert, ErrorState } from '../../components/ui/feedback'
+import { Alert } from '../../components/ui/feedback'
 import { Breadcrumb } from '../../components/ui/nav'
 import { CategoryChip, TagChip } from '../../components/ui/misc'
 import { buttonClasses } from '../../components/ui/form'
+import { PageIntrouvable } from './ErrorPages'
 
 /** Détail d'un article publié (§17) + commentaires (§28) */
 export function ArticleDetail() {
@@ -53,20 +56,7 @@ export function ArticleDetail() {
   const retourListe = depuisAccueil ? '/actualites' : retourArticle
 
   if (!article) {
-    return (
-      <div className="mx-auto max-w-3xl px-4 py-16">
-        <ErrorState
-          title="Article introuvable"
-          description="Cet article n'existe pas ou n'est plus publié. Il a peut-être été retiré du site ou placé dans la corbeille."
-        />
-        <p className="mt-6 text-center">
-          <Link to={retourArticle} className="inline-flex min-h-[48px] items-center rounded-xl bg-forest px-6 font-bold text-white hover:bg-forest-dark">
-            <ArrowLeft aria-hidden="true" className="mr-2 h-5 w-5" />
-            {depuisAccueil ? 'Retour à l’accueil' : 'Retour aux actualités'}
-          </Link>
-        </p>
-      </div>
-    )
+    return <ArticleAbsent key={slug} actualites={retourListe} />
   }
 
   const coverId = articleCoverMediaId(article)
@@ -150,7 +140,7 @@ export function ArticleDetail() {
         <img
           src={mediaUrl(cover.file)}
           alt={cover.alt}
-          className="mt-5 aspect-video w-full rounded-2xl border border-line object-cover sm:aspect-[2/1]"
+          className={`mt-5 aspect-video w-full rounded-2xl border border-line sm:aspect-[2/1] ${cover.fromPdf ? 'bg-sand object-contain' : 'object-cover'}`}
         />
       ) : null}
 
@@ -163,7 +153,7 @@ export function ArticleDetail() {
               const c = getCategory(cid)
               return c ? (
                 <li key={cid}>
-                  <CategoryChip to={articleCategoryLink(c.id)}>{c.nom}</CategoryChip>
+                  <CategoryChip to={articleCategoryLink(c.id)}><span className="inline-flex items-center gap-1.5"><CategoryVisualMark visual={c.visual} size="h-4 w-4" />{c.nom}</span></CategoryChip>
                 </li>
               ) : null
             })}
@@ -193,4 +183,22 @@ export function ArticleDetail() {
       </p>
     </article>
   )
+}
+
+function ArticleAbsent({ actualites }: { actualites: string }) {
+  const [verificationTerminee, setVerificationTerminee] = useState(false)
+
+  useEffect(() => {
+    let actif = true
+    // Un article absent du cache peut apparaître à la fin de l’actualisation en cours.
+    void Promise.resolve(ensureContent('public')).then(() => {
+      if (actif) setVerificationTerminee(true)
+    })
+    return () => { actif = false }
+  }, [])
+
+  if (!verificationTerminee) {
+    return <p className="mx-auto max-w-4xl px-4 py-10" role="status">Chargement des contenus…</p>
+  }
+  return <PageIntrouvable description="Cet article n’existe pas ou n’est plus publié." actualites={actualites} />
 }

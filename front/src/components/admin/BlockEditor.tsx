@@ -4,9 +4,11 @@ import type { Dispatch, SetStateAction } from 'react'
 import {
   ArrowDown,
   ArrowUp,
+  FileText,
   Heading1,
   Heading2,
   Image as ImageIcon,
+  Images,
   Link as LinkIcon,
   ListOrdered,
   MapPin,
@@ -29,12 +31,19 @@ import { ConfirmDialog } from '../ui/overlay'
 import { MediaPicker } from './MediaPicker'
 import { TrailEditor } from './TrailEditor'
 import { LocationEditor } from './LocationEditor'
+import { BlockCarouselEditor } from './BlockCarouselEditor'
+import { ImageAlternativeField } from './ImageAlternativeField'
+import { PdfBlockEditor } from './PdfBlockEditor'
+import { VisualPdfFields } from './VisualPdfFields'
+import { imageAlternative } from '../../lib/imageAlternative'
 
 const LIBELLES: Record<BlockType, { nom: string; icone: typeof Text; hint: string }> = {
   titre: { nom: 'Titre', icone: Heading1, hint: 'Titre de section (niveau de titre automatiquement hiérarchisé)' },
   'sous-titre': { nom: 'Sous-titre', icone: Heading2, hint: 'Sous-titre de section' },
   paragraphe: { nom: 'Paragraphe', icone: Text, hint: 'Texte courant' },
   image: { nom: 'Image', icone: ImageIcon, hint: 'Image de la médiathèque avec texte alternatif' },
+  carrousel: { nom: 'Carrousel', icone: Images, hint: 'Plusieurs images dans l’ordre de votre choix' },
+  pdf: { nom: 'Document PDF', icone: FileText, hint: 'Consultation et téléchargement selon vos réglages' },
   video: { nom: 'Vidéo YouTube', icone: Youtube, hint: 'Lecteur intégré — la vidéo reste hébergée sur YouTube (§19)' },
   liste: { nom: 'Liste', icone: ListOrdered, hint: 'Liste à puces, un élément par ligne' },
   lien: { nom: 'Lien', icone: LinkIcon, hint: 'Lien interne (commence par /) ou externe' },
@@ -65,7 +74,9 @@ export function BlockEditor({
   const ajouter = (type: BlockType) => {
     const base: Block = { id: newBlockId('nvx'), type }
     if (type === 'liste') base.items = ['Premier élément', 'Deuxième élément']
-    if (type === 'paragraphe') base.text = ''
+    if (type === 'paragraphe' || type === 'image') base.text = ''
+    if (type === 'carrousel') base.slides = []
+    if (type === 'pdf') base.pdf = { display: true, download: true, presentation: 'integrated' }
     if (type === 'randonnee') { base.trail = emptyTrail; base.visibility = defaultTrailVisibility }
     if (type === 'localisation') base.location = emptyLocation
     onChange([...blocks, base])
@@ -92,7 +103,7 @@ export function BlockEditor({
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex min-w-0 flex-col gap-4">
       <h2 className="text-xl text-forest">Contenu de l'article (blocs)</h2>
       <p className="text-[0.9375rem] text-mist">
         Ajoutez, modifiez, réorganisez et supprimez des blocs. La prévisualisation est disponible
@@ -109,7 +120,7 @@ export function BlockEditor({
             const meta = LIBELLES[b.type]
             const Icone = meta.icone
             return (
-              <li key={b.id} className="rounded-2xl border border-line bg-white p-4">
+              <li key={b.id} className="min-w-0 rounded-2xl border border-line bg-white p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="inline-flex items-center gap-2 font-bold">
                     <Icone aria-hidden="true" className="h-5 w-5 text-forest" />
@@ -118,7 +129,7 @@ export function BlockEditor({
                       bloc {index + 1} sur {blocks.length}
                     </span>
                   </p>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => deplacer(index, -1)}
@@ -156,15 +167,16 @@ export function BlockEditor({
       )}
 
       {/* Ajout de bloc */}
-      <div className="relative">
-        <Button onClick={() => setMenuOuvert((o) => !o)} aria-expanded={menuOuvert} aria-haspopup="true">
+      {/* Les colonnes du menu suivent la largeur de l’éditeur, pas celle de l’écran (barre latérale, panneau). */}
+      <div className="@container relative">
+        <Button onClick={() => setMenuOuvert((o) => !o)} aria-expanded={menuOuvert}>
           <Plus aria-hidden="true" className="h-5 w-5" />
           Ajouter un bloc
         </Button>
         {menuOuvert ? (
-          <div className="absolute z-10 mt-2 grid w-full max-w-xl grid-cols-2 gap-2 rounded-2xl border border-line bg-white p-3 shadow-xl sm:grid-cols-4">
+          <div className="mt-2 grid w-full max-w-2xl grid-cols-1 gap-2 rounded-2xl border border-line bg-white p-3 @md:grid-cols-2 @2xl:grid-cols-3">
             {(Object.keys(LIBELLES) as BlockType[]).filter(type =>
-              article || (type !== 'randonnee' && type !== 'localisation')
+              article || !['randonnee', 'localisation', 'carrousel', 'pdf'].includes(type)
             ).map((type) => {
               const { nom, icone: Icone } = LIBELLES[type]
               return (
@@ -172,10 +184,10 @@ export function BlockEditor({
                   key={type}
                   type="button"
                   onClick={() => ajouter(type)}
-                  className="inline-flex min-h-[48px] items-center gap-2 rounded-xl border border-line px-3 font-bold text-forest hover:bg-leaf-pale"
+                  className="flex min-h-12 min-w-0 items-center gap-2 rounded-xl border border-line px-3 py-2 text-left font-bold text-forest hover:bg-leaf-pale"
                 >
-                  <Icone aria-hidden="true" className="h-5 w-5" />
-                  {nom}
+                  <Icone aria-hidden="true" className="size-5 shrink-0" />
+                  <span className="min-w-0 [overflow-wrap:anywhere]">{nom}</span>
                 </button>
               )
             })}
@@ -204,11 +216,16 @@ export function BlockEditor({
       <MediaPicker
         open={pickerIndex !== null}
         onClose={() => setPickerIndex(null)}
-        titre="Choisir l'image du bloc"
-        selectionActive={pickerIndex !== null ? blocks[pickerIndex]?.mediaId ?? null : null}
+        titre={article ? 'Choisir une image ou un PDF pour le bloc' : "Choisir l’image du bloc"}
+        type={article ? 'VISUAL' : 'IMAGE'}
+        selectionActive={pickerIndex !== null ? getMedia(blocks[pickerIndex]?.mediaId ?? '')?.sourcePdfId ?? blocks[pickerIndex]?.mediaId : null}
         onChoose={(media) => {
           if (pickerIndex !== null && media.type === 'IMAGE') {
-            majBloc(pickerIndex, { mediaId: media.id, alt: media.alt })
+            const current = blocks[pickerIndex]
+            if (!current) return
+            const alternative = current.decorative || current.alt?.trim() ? {} : imageAlternative(media)
+            const access = current.mediaId === media.id ? {} : { viewPdf: undefined, downloadPdf: undefined }
+            majBloc(pickerIndex, { mediaId: media.id, ...alternative, ...access })
           }
         }}
       />
@@ -217,6 +234,10 @@ export function BlockEditor({
 
   function renderChamp(b: Block, index: number) {
     switch (b.type) {
+      case 'carrousel':
+        return <BlockCarouselEditor block={b} onChange={slides => majBloc(index, { slides })} errors={errors} />
+      case 'pdf':
+        return <PdfBlockEditor block={b} onChange={patch => majBloc(index, patch)} errors={errors} />
       case 'randonnee':
         return <TrailEditor block={b}
           onChange={patch => onChange(current => current.map(block => block.id === b.id ? { ...block, ...patch } : block))}
@@ -255,8 +276,8 @@ export function BlockEditor({
             {media ? (
               <ContentImage
                 src={mediaUrl(media.file)}
-                alt={b.alt || media.alt}
-                className="h-40 w-full max-w-sm rounded-xl border border-line object-cover"
+                alt={b.decorative ? '' : (b.alt || media.alt)}
+                className={`h-40 w-full max-w-sm rounded-xl border border-line ${media.fromPdf ? 'bg-sand object-contain' : 'object-cover'}`}
               />
             ) : (
               <p className="rounded-xl border border-dashed border-line bg-sand p-4 text-mist">
@@ -269,20 +290,12 @@ export function BlockEditor({
                 {media ? 'Changer l\'image' : 'Choisir dans la médiathèque'}
               </Button>
             </div>
-            <Field
-              label="Texte alternatif (obligatoire)"
-              htmlFor={`blk-alt-${b.id}`}
-              required
-              hint="Décrit l'image pour les lecteurs d'écran et si l'image ne se charge pas."
-              error={errors?.[errorId]}
-            >
-              <Input
-                id={`blk-alt-${b.id}`}
-                value={b.alt ?? ''}
-                invalid={Boolean(errors?.[errorId])}
-                describedBy={`${errorId}-hint${errors?.[errorId] ? ` ${errorId}-err` : ''}`}
-                onChange={(e) => majBloc(index, { alt: e.target.value })}
-              />
+            <ImageAlternativeField id={errorId} alt={b.alt ?? ''} decorative={b.decorative} error={errors?.[errorId]}
+              onAltChange={alt => majBloc(index, { alt })} onDecorativeChange={decorative => majBloc(index, { decorative })} />
+            {article && media?.fromPdf && <VisualPdfFields id={`blk-${b.id}`} value={b} onChange={patch => majBloc(index, patch)} />}
+            <Field label="Légende" htmlFor={`blk-caption-${b.id}`}>
+              <Input id={`blk-caption-${b.id}`} value={b.text ?? ''} maxLength={1000}
+                onChange={event => majBloc(index, { text: event.target.value })} />
             </Field>
           </div>
         )

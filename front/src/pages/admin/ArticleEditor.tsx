@@ -1,5 +1,5 @@
 import { ContentImage } from '../../components/content/ContentImage'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -7,17 +7,18 @@ import {
   Eye,
   FileText,
   Paperclip,
+  Pencil,
   Save,
   SlidersHorizontal,
   Trash2,
   X,
 } from 'lucide-react'
-import type { Article, PublicNameFormat } from '../../types'
+import type { Article, Category, PublicNameFormat } from '../../types'
 import { useCurrentUser } from '../../lib/auth'
 import { publicNameOptions } from '../../lib/publicName'
 import { db, useDb } from '../../lib/db'
 import { articleAction, saveArticle, useContentAction } from '../../lib/content'
-import { articleAuthorLabel, getMedia } from '../../lib/selectors'
+import { articleAuthorLabel, articleExcerpt, firstArticleImage, getMedia } from '../../lib/selectors'
 import { toInputDateTime, formatDateTime } from '../../lib/format'
 import { mediaUrl } from '../../lib/assets'
 import { editableArticleBlocks } from '../../lib/mapBlocks'
@@ -26,6 +27,8 @@ import { TrailDetails } from '../../components/content/TrailDetails'
 import { BlockEditor } from '../../components/admin/BlockEditor'
 import { MediaPicker } from '../../components/admin/MediaPicker'
 import { QuickClassification } from '../../components/admin/QuickClassification'
+import { CategoryEditDialog } from '../../components/admin/CategoryEditDialog'
+import { CategoryVisualMark } from '../../components/content/CategoryVisualMark'
 import { ArticleStatutBadge } from '../../components/content/ArticleCard'
 import { BlockView, estLienAutorise, youtubeId } from '../../components/content/BlockRenderer'
 import { Button, Field, Input, Select, buttonClasses } from '../../components/ui/form'
@@ -61,6 +64,8 @@ function ArticleForm({ existant }: { existant?: Article }) {
   const [saving, setSaving] = useState(false)
   const [validation, setValidation] = useState<'draft' | 'publish' | 'schedule' | 'reprogram' | null>(null)
   const [categorieIds, setCategorieIds] = useState<string[]>(existant?.categorieIds ?? [])
+  const [editingCategory, setEditingCategory] = useState<Category>()
+  const categoryTrigger = useRef<HTMLButtonElement>()
   const [tagIds, setTagIds] = useState<string[]>(existant?.tagIds ?? [])
   const [authorNameFormat, setAuthorNameFormat] = useState<PublicNameFormat>(
     existant?.authorNameFormat ?? user?.publicNameFormat ?? 'INITIAL',
@@ -89,8 +94,20 @@ function ArticleForm({ existant }: { existant?: Article }) {
     if (publication && !titre.trim()) errors['art-titre'] = 'Renseignez le titre de l’article.'
     for (const block of blocks) {
       const url = block.url?.trim() ?? ''
-      if (block.type === 'image' && (!block.mediaId || !block.alt?.trim()))
+      if (block.type === 'image' && (!block.mediaId || (!block.decorative && !block.alt?.trim())))
         errors[`blk-alt-${block.id}`] = 'Choisissez une image et renseignez son texte alternatif.'
+      if (block.type === 'carrousel') {
+        const slides = block.slides ?? []
+        if (publication && slides.length < 2) errors[`blk-${block.id}-slides`] = 'Ajoutez au moins deux images au carrousel.'
+        slides.forEach((slide, index) => {
+          if (!slide.decorative && !slide.alt.trim()) errors[`blk-${block.id}-slide-${index}-alt`] = 'Renseignez le texte alternatif de l’image.'
+        })
+      }
+      if (block.type === 'pdf') {
+        if (!block.mediaId || !block.text?.trim()) errors[`blk-${block.id}-pdf-title`] = 'Choisissez un PDF et renseignez son titre.'
+        else if (block.pdf?.display === false && block.pdf.download === false)
+          errors[`blk-${block.id}-pdf-access`] = 'Activez la consultation ou le téléchargement.'
+      }
       if (block.type === 'video' && (url ? !youtubeId(url) : publication))
         errors[`blk-${block.id}`] = url ? 'Saisissez une adresse YouTube valide.' : 'Renseignez l’adresse de la vidéo YouTube.'
       if (block.type === 'lien' && (url ? !estLienAutorise(url) : publication))
@@ -207,9 +224,10 @@ function ArticleForm({ existant }: { existant?: Article }) {
         }
       />
 
-      {/* Barre d'actions collante : reste accessible pendant la rédaction */}
+      {/* Barre d'actions collante dès 1024 px. En dessous, elle occupe plusieurs lignes et masquerait
+          l’éditeur et le menu d’ajout ; Enregistrer et Prévisualiser restent aussi disponibles sous le contenu. */}
       {!enCorbeille ? (
-        <div className="sticky top-[72px] z-30 border-b border-admin-line bg-white/95 shadow-sm backdrop-blur lg:top-0">
+        <div className="relative z-30 border-b border-admin-line bg-white/95 shadow-sm backdrop-blur lg:sticky lg:top-0">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-3 md:px-8">
             <Link to="/admin/articles" className={buttonClasses('blanc', 'petit')}>
               <ArrowLeft aria-hidden="true" className="h-4 w-4" />
@@ -269,7 +287,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
         </div>
       ) : null}
 
-      <div className="mx-auto grid max-w-6xl gap-8 px-4 py-8 md:px-8 lg:grid-cols-[1fr_20rem]">
+      <div className="mx-auto grid max-w-6xl gap-8 px-4 py-8 md:px-8 xl:grid-cols-[minmax(0,1fr)_20rem]">
         {/* Colonne principale : titre + contenu par blocs */}
         <div className="flex flex-col gap-6">
           {enCorbeille ? (
@@ -324,6 +342,39 @@ function ArticleForm({ existant }: { existant?: Article }) {
             </p>
           </div>
 
+          <section className="carte p-6">
+            <h2 className="text-xl text-forest">Résumé automatique</h2>
+            <p className="mt-2 break-words text-mist">{articleExcerpt(blocks) || 'Le premier paragraphe fournit l’extrait affiché dans les actualités.'}</p>
+          </section>
+
+          <section className="carte min-w-0 p-6">
+            <h2 className="text-xl text-forest">Image de couverture</h2>
+            {/* Priorité (§22) : couverture choisie > première image du contenu > visuel par défaut */}
+            {cover ? (
+              <figure className="mt-3">
+                <ContentImage src={mediaUrl(cover.file)} alt={cover.alt}
+                  className="aspect-video w-full rounded-xl border border-line bg-sand object-contain" />
+                {(cover.fromPdf || cover.alt) && <figcaption className="mt-2 break-words text-sm text-mist">
+                  {cover.fromPdf && <span className="block">Première page du PDF · {cover.nom}</span>}
+                  {cover.alt && <span className="block">Texte alternatif · {cover.alt}</span>}
+                </figcaption>}
+              </figure>
+            ) : (
+              <p className="mt-3 rounded-xl border border-dashed border-line bg-sand p-4 text-mist">
+                La première image du contenu sera utilisée, puis le visuel par défaut du site si le contenu ne comporte aucune image.
+              </p>
+            )}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button variant="secondaire" size="petit" disabled={actionsBloquees || enCorbeille} onClick={() => setPickerCouverture(true)}>
+                <Paperclip aria-hidden="true" className="h-4 w-4" />
+                {coverMediaId ? 'Remplacer la couverture' : 'Choisir une couverture'}
+              </Button>
+              {coverMediaId && <Button variant="fantome" size="petit" disabled={actionsBloquees || enCorbeille} onClick={() => setCoverMediaId(null)}>
+                Retirer la couverture
+              </Button>}
+            </div>
+          </section>
+
           <fieldset className="carte min-w-0 p-6" disabled={enCorbeille || saving}>
             <BlockEditor article blocks={blocks} onChange={setBlocks} errors={erreurs}
               onTrailBusy={(id, busy) => setGpxEnCours(ids => busy ? [...ids, id] : ids.filter(item => item !== id))} />
@@ -349,14 +400,14 @@ function ArticleForm({ existant }: { existant?: Article }) {
           ) : null}
         </div>
 
-        {/* Panneau de paramètres : repliable sur mobile (brief V3 §4) */}
+        {/* Panneau de paramètres repliable sous 1280 px : à côté de la barre latérale admin, deux colonnes rendraient l’éditeur trop étroit (brief V3 §4) */}
         <div className="flex flex-col gap-4">
           <button
             type="button"
             onClick={() => setParametresOuverts((o) => !o)}
             aria-expanded={parametresOuverts}
             aria-controls="panneau-parametres"
-            className="inline-flex min-h-[48px] items-center justify-between gap-2 rounded-xl border border-line bg-white px-4 font-bold text-forest hover:bg-leaf-pale lg:hidden"
+            className="inline-flex min-h-[48px] items-center justify-between gap-2 rounded-xl border border-line bg-white px-4 font-bold text-forest hover:bg-leaf-pale xl:hidden"
           >
             <span className="inline-flex items-center gap-2">
               <SlidersHorizontal aria-hidden="true" className="h-5 w-5" />
@@ -374,7 +425,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
           <aside
             id="panneau-parametres"
             aria-label="Propriétés de l'article"
-            className={`${parametresOuverts ? 'flex' : 'hidden'} flex-col gap-6 lg:flex`}
+            className={`${parametresOuverts ? 'flex' : 'hidden'} flex-col gap-6 xl:flex`}
           >
             <section className="carte p-6">
               <h2 className="text-xl text-forest">Statut</h2>
@@ -459,7 +510,8 @@ function ArticleForm({ existant }: { existant?: Article }) {
               <fieldset className="mt-3 flex flex-col gap-2">
                 <legend className="sr-only">Catégories de l'article</legend>
                 {db.categories.map((c) => (
-                  <label key={c.id} className="flex items-center gap-3 rounded-xl bg-sand p-3 font-bold">
+                  <div key={c.id} className="flex min-w-0 items-center justify-between gap-2 rounded-xl bg-sand p-3">
+                  <label className="flex min-w-0 flex-1 items-center gap-2 font-bold">
                     <input
                       type="checkbox"
                       checked={categorieIds.includes(c.id)}
@@ -468,10 +520,17 @@ function ArticleForm({ existant }: { existant?: Article }) {
                           e.target.checked ? [...ids, c.id] : ids.filter((x) => x !== c.id),
                         )
                       }
-                      className="h-5 w-5 accent-forest"
+                      className="h-5 w-5 shrink-0 accent-forest"
                     />
-                    {c.nom}
+                    <CategoryVisualMark visual={c.visual} />
+                    <span className="min-w-0 [overflow-wrap:anywhere]">{c.nom}</span>
                   </label>
+                  <button type="button" className="grid size-11 shrink-0 place-items-center rounded-lg text-forest hover:bg-leaf-pale"
+                    aria-label={`Modifier la catégorie ${c.nom}`} disabled={actionsBloquees || enCorbeille} onClick={event => {
+                      categoryTrigger.current = event.currentTarget
+                      setEditingCategory(c)
+                    }}><Pencil aria-hidden="true" className="size-5" /></button>
+                  </div>
                 ))}
               </fieldset>
               <QuickClassification kind="categories" onCreated={id => setCategorieIds(ids => [...ids, id])} />
@@ -521,30 +580,8 @@ function ArticleForm({ existant }: { existant?: Article }) {
             </section>
 
             <section className="carte p-6">
-              <h2 className="text-xl text-forest">Image de couverture</h2>
-              {/* Priorité (§22) : couverture choisie > première image du contenu > visuel par défaut */}
-              {cover ? (
-                <ContentImage
-                  src={mediaUrl(cover.file)}
-                  alt={cover.alt}
-                  className="mt-3 h-40 w-full rounded-xl border border-line object-cover"
-                />
-              ) : (
-                <p className="mt-3 rounded-xl border border-dashed border-line bg-sand p-4 text-[0.9375rem] text-mist">
-                  Aucune couverture choisie : la première image du contenu sera utilisée, sinon le
-                  visuel par défaut du site.
-                </p>
-              )}
+              <h2 className="text-xl text-forest">À la une</h2>
               <div className="mt-3">
-                <Button variant="secondaire" size="petit" onClick={() => setPickerCouverture(true)}>
-                  <Paperclip aria-hidden="true" className="h-4 w-4" />
-                  {cover ? 'Changer la couverture' : 'Choisir une couverture'}
-                </Button>
-                {cover ? <Button variant="fantome" size="petit" onClick={() => setCoverMediaId(null)}>
-                  Retirer la couverture
-                </Button> : null}
-              </div>
-              <div className="mt-5 border-t border-line pt-4">
                 <p className="mb-2 text-[0.9375rem] text-mist">
                   {existant?.positionCarrousel != null
                     ? `Article sélectionné à la une, position ${existant.positionCarrousel}.`
@@ -585,11 +622,16 @@ function ArticleForm({ existant }: { existant?: Article }) {
         </div>
       </div>
 
+      {editingCategory && <CategoryEditDialog category={editingCategory} onClose={() => {
+        setEditingCategory(undefined)
+        requestAnimationFrame(() => categoryTrigger.current?.focus({ preventScroll: true }))
+      }} />}
       <MediaPicker
         open={pickerCouverture}
         onClose={() => setPickerCouverture(false)}
-        titre="Choisir l'image de couverture"
-        selectionActive={coverMediaId}
+        titre="Choisir une image ou un PDF pour la couverture"
+        type="VISUAL"
+        selectionActive={cover?.sourcePdfId ?? coverMediaId}
         onChoose={(m) => setCoverMediaId(m.id)}
       />
 
@@ -635,7 +677,7 @@ export function ArticlePreview() {
   }
 
   const blocks = article.blocks
-  const cover = getMedia(article.coverMediaId ?? blocks.find(block => block.type === 'image' && block.mediaId)?.mediaId ?? 'm-visuel-defaut')
+  const cover = getMedia(article.coverMediaId ?? firstArticleImage(blocks) ?? 'm-visuel-defaut')
 
   return (
     <div>
@@ -672,7 +714,7 @@ export function ArticlePreview() {
           <ContentImage
             src={mediaUrl(cover.file)}
             alt={cover.alt}
-            className="mt-6 aspect-[16/8] w-full rounded-2xl border border-line object-cover"
+            className={`mt-6 aspect-[16/8] w-full rounded-2xl border border-line ${cover.fromPdf ? 'bg-sand object-contain' : 'object-cover'}`}
           />
         ) : null}
         <div className="mt-8 rounded-2xl border border-line bg-white p-6 md:p-10">
@@ -680,7 +722,8 @@ export function ArticlePreview() {
             {blocks.length === 0 ? (
               <p className="text-mist">Aucun bloc de contenu : ajoutez du contenu dans l'éditeur.</p>
             ) : (
-              blocks.map((b) => <BlockView key={b.id} block={b} />)
+              blocks.map((b) => <BlockView key={b.id} block={b}
+                articleId={['pdf', 'image', 'carrousel'].includes(b.type) ? article.id : undefined} adminPreview />)
             )}
           </div>
         </div>

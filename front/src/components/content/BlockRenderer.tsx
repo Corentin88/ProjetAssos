@@ -5,6 +5,9 @@ import { getMedia } from '../../lib/selectors'
 import { mediaUrl } from '../../lib/assets'
 import { TrailDetails } from './TrailDetails'
 import { LocationDetails } from './LocationMap'
+import { BlockCarousel } from './BlockCarousel'
+import { PdfActions } from './PdfActions'
+import { PdfReader } from './PdfReader'
 
 function lireAdresse(url: string): URL | null {
   try {
@@ -51,9 +54,10 @@ export function BlockRenderer({ blocks, articleId }: { blocks: Block[]; articleI
   )
 }
 
-export function BlockView({ block, sousPage = false, articleId }: { block: Block; sousPage?: boolean; articleId?: string }) {
+export function BlockView({ block, sousPage = false, articleId, adminPreview = false }: { block: Block; sousPage?: boolean; articleId?: string; adminPreview?: boolean }) {
   const Titre = sousPage ? 'h2' : 'h3'
   const SousTitre = sousPage ? 'h3' : 'h4'
+  const pdfPath = articleId ? `${adminPreview ? '/admin/content' : ''}/articles/${articleId}/blocks/${block.id}/pdf` : undefined
   switch (block.type) {
     case 'randonnee':
       return block.trail ? <TrailDetails trail={block.trail} mapPreview={block.mapPreview} visibility={block.visibility}
@@ -68,22 +72,43 @@ export function BlockView({ block, sousPage = false, articleId }: { block: Block
       return <SousTitre className="text-forest">{block.text}</SousTitre>
     case 'paragraphe':
       return <p className="whitespace-pre-line text-base leading-relaxed sm:text-lg">{block.text}</p>
+    case 'carrousel':
+      return <BlockCarousel slides={block.slides ?? []} pdfPath={pdfPath} secure={adminPreview} />
+    case 'pdf': {
+      if (!pdfPath || !block.pdf || (!block.pdf.display && !block.pdf.download)) return null
+      const title = block.text || 'Document PDF'
+      return <section className="grid min-w-0 gap-3 rounded-xl border border-line bg-sand p-4">
+        <Titre className="text-xl text-forest">{title}</Titre>
+        {block.pdf.description && <p className="whitespace-pre-line text-mist">{block.pdf.description}</p>}
+        {block.pdf.display && block.pdf.presentation === 'integrated' && <PdfReader key={pdfPath} title={title} path={pdfPath} secure={adminPreview} />}
+        <PdfActions title={title} viewPath={block.pdf.display ? `${pdfPath}/view` : undefined}
+          downloadPath={block.pdf.download ? `${pdfPath}/download` : undefined} secure={adminPreview} />
+      </section>
+    }
     case 'image': {
       const media = block.mediaId ? getMedia(block.mediaId) : undefined
       if (!media) return null
-      return (
-        <figure className="overflow-hidden rounded-2xl border border-line">
-          <ContentImage
+      // Les anciens blocs affichaient leur texte alternatif comme légende.
+      const alt = block.decorative ? '' : (block.alt || media.alt)
+      const caption = block.text ?? alt
+      const image = <ContentImage
             src={mediaUrl(media.file)}
-            alt={block.alt || media.alt}
+            alt={alt}
             width={media.largeur || undefined}
             height={media.hauteur || undefined}
             className="mx-auto h-auto max-h-[36rem] w-auto max-w-full object-contain"
             loading="lazy"
           />
-          {block.alt || media.alt ? (
+      const viewPath = pdfPath && media.fromPdf && block.viewPdf ? `${pdfPath}/view` : undefined
+      const downloadPath = pdfPath && media.fromPdf && block.downloadPdf ? `${pdfPath}/download` : undefined
+      return (
+        <figure className="overflow-hidden rounded-2xl border border-line">
+          {viewPath ? <PdfActions title={media.nom} viewPath={viewPath} downloadPath={downloadPath} secure={adminPreview}
+            preview={image} /> : image}
+          {!viewPath && downloadPath && <PdfActions title={media.nom} downloadPath={downloadPath} secure={adminPreview} />}
+          {caption ? (
             <figcaption className="bg-sand px-4 py-2 text-[0.9375rem] text-mist">
-              {block.alt || media.alt}
+              {caption}
             </figcaption>
           ) : null}
         </figure>

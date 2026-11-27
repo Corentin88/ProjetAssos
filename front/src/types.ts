@@ -45,12 +45,15 @@ export interface User {
   pendingEmail?: string
 }
 
+export type CategoryVisual = { icon: string; mediaId?: never } | { mediaId: string; icon?: never }
+
 export interface Category {
   id: string
   nom: string
   slug: string
   articleCount?: number
   mediaCount?: number
+  visual?: CategoryVisual | null
 }
 
 export interface Tag {
@@ -67,6 +70,8 @@ export type BlockType =
   | 'sous-titre'
   | 'paragraphe'
   | 'image'
+  | 'carrousel'
+  | 'pdf'
   | 'video'
   | 'liste'
   | 'lien'
@@ -74,7 +79,10 @@ export type BlockType =
   | 'randonnee'
   | 'localisation'
 
-export interface Block {
+export type VisualPdfOptions = { viewPdf?: boolean; downloadPdf?: boolean }
+export type BlockImage = VisualPdfOptions & { mediaId: string; alt: string; caption?: string; decorative?: boolean }
+
+export interface Block extends VisualPdfOptions {
   id: string
   type: BlockType
   /** texte du bloc (titre, sous-titre, paragraphe, citation, libellé du lien) */
@@ -84,6 +92,9 @@ export interface Block {
   mediaId?: string
   /** texte alternatif obligatoire pour les images */
   alt?: string
+  decorative?: boolean
+  slides?: BlockImage[]
+  pdf?: { display: boolean; download: boolean; description?: string; presentation?: 'integrated' | 'link' }
   items?: string[]
   trail?: TrailBlockFields
   visibility?: TrailVisibility
@@ -244,12 +255,15 @@ export interface Comment {
 }
 
 export interface Media {
+  fromPdf?: boolean
+  sourcePdfId?: string
   id: string
   file: string
   nom: string
   tailleKo: number
   format: 'JPG' | 'PNG' | 'WebP'
   alt: string
+  decorative?: boolean
   largeur: number
   hauteur: number
   createdAt: string
@@ -265,11 +279,12 @@ interface LibraryItemFields {
 }
 
 export type LibraryImage = Media & LibraryItemFields & { type: 'IMAGE'; thumbnail: string }
-export type LibraryItem = LibraryImage | (LibraryItemFields & { type: 'GPX' })
+export type LibraryPdf = LibraryItemFields & { type: 'PDF'; originalName: string }
+export type LibraryItem = LibraryImage | LibraryPdf | (LibraryItemFields & { type: 'GPX' })
 export type LibraryDetails = LibraryItem & {
   categorieIds: string[]
   tagIds: string[]
-  usage: { articles: string[]; avatars: number; association: boolean; trails: number }
+  usage: { articles: string[]; avatars: number; association: boolean; trails: number; categoryVisuals?: string[] }
 }
 
 export interface MediaFolder {
