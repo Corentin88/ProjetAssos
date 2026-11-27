@@ -22,7 +22,7 @@ type StoredMapBlock =
 
 export function mapBlockInput(block: BlockDto, position: number, mapPreview: MapPreview | null) {
   // Le discriminant JSON étend les blocs sans changer l’enum PostgreSQL.
-  // La colonne media_id est réservée aux images par une contrainte SQL.
+  // La colonne media_id sert aux blocs Image et PDF. Le GPX garde sa référence dans les données du bloc.
   const base = { type: 'PARAGRAPH' as const, position };
   if (block.type === 'localisation' && block.location) {
     const { title, address, description, latitude, longitude } = block.location;

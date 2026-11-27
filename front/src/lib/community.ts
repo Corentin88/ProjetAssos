@@ -84,7 +84,7 @@ export async function changeNotifications(owner: string, action: 'read' | 'delet
 }
 
 export function blockPayload(blocks: Block[]) {
-  return blocks.map(({ type, text, url, mediaId, alt, items }) => ({ type, text, url, mediaId, alt, items }))
+  return blocks.map(({ type, text, url, mediaId, alt, decorative, items }) => ({ type, text, url, mediaId, alt: decorative ? '' : alt, decorative, items }))
 }
 export function saveAssociation(blocks: Block[], coordonnees: AssociationPage['coordonnees']) {
   return protectedRequest<AssociationPage>('/admin/association', 'PATCH', { blocks: blockPayload(blocks), coordonnees })

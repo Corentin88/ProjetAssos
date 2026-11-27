@@ -10,6 +10,7 @@ import { Alert, EmptyState, ErrorState } from '../../components/ui/feedback'
 import { Button, buttonClasses } from '../../components/ui/form'
 import { Breadcrumb } from '../../components/ui/nav'
 import { RequireAuth } from '../../components/layout/guards'
+import { PageIntrouvable } from './ErrorPages'
 
 function ProfilPublicContenu({ tousLesCommentaires }: { tousLesCommentaires?: boolean }) {
   const { id } = useParams()
@@ -38,11 +39,14 @@ function ProfilPublicContenu({ tousLesCommentaires }: { tousLesCommentaires?: bo
   }
 
   if (!cible) {
+    if (!idApi || !profil?.indisponible) {
+      return <PageIntrouvable description="Ce profil n’existe pas ou n’est plus disponible." />
+    }
     return (
       <div className="mx-auto max-w-3xl px-4 py-16">
         <ErrorState
-          title={idApi && profil?.indisponible ? 'Profil indisponible' : 'Profil introuvable'}
-          description={idApi && profil?.indisponible ? 'Le profil n’a pas pu être chargé.' : "Ce profil n'existe pas ou appartient à un compte supprimé."}
+          title="Profil indisponible"
+          description="Le profil n’a pas pu être chargé."
         />
       </div>
     )

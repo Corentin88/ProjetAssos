@@ -133,10 +133,14 @@ export function useForm<T extends Record<string, string>>(initial: T) {
   return { values, errors, submitted, set, setFieldErrors, reset }
 }
 
-/** Même longueur que le DTO d’authentification. */
+export const passwordMinimumMessage = 'Votre mot de passe doit contenir au moins 12 caractères.'
+const passwordMaximumMessage = 'Votre mot de passe ne peut pas dépasser 128 caractères.'
+
+/** Compte les caractères comme class-validator, y compris les sélecteurs de présentation. */
 export function validatePassword(pwd: string): string | null {
-  const longueur = Array.from(pwd).length
-  if (longueur < 12 || longueur > 128) return 'Le mot de passe doit contenir entre 12 et 128 caractères.'
+  const longueur = Array.from(pwd).length - (pwd.match(/[^\uFE0F\uFE0E][\uFE0F\uFE0E]/g)?.length ?? 0)
+  if (longueur < 12) return passwordMinimumMessage
+  if (longueur > 128) return passwordMaximumMessage
   return null
 }
 

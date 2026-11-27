@@ -21,7 +21,7 @@ function original(withAltitudes = false) {
     '</trkseg></trk></gpx>');
 }
 
-function fixture(bytes: Buffer, elevations: Prisma.JsonValue, allowed = true) {
+function fixture(bytes: Buffer<ArrayBuffer>, elevations: Prisma.JsonValue, allowed = true) {
   vi.mocked(readFile).mockResolvedValue(bytes);
   vi.mocked(open).mockResolvedValue({
     stat: async () => ({ size: bytes.length, isFile: () => true }),
