@@ -1,6 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import { NotFoundException } from '@nestjs/common';
 import type { Response } from 'express';
+import {
+  maxPasswordChars,
+  minPasswordChars,
+  passwordMaximumMessage,
+  passwordMinimumMessage,
+} from './password-validation.js';
 
 const pages = {
   invitation: ['Activer mon compte', 'invitations/complete'],
@@ -40,8 +46,9 @@ location.replace(${target} + (token ? '?token=' + encodeURIComponent(token) : ''
     kind === 'email-change'
       ? ''
       : `
-    <p><label>Nouveau mot de passe <input name="password" type="password" required minlength="12" maxlength="128" autocomplete="new-password"></label></p>
-    <p><label>Confirmation <input name="passwordConfirmation" type="password" required minlength="12" maxlength="128" autocomplete="new-password"></label></p>`;
+    <p><label>Nouveau mot de passe <input name="password" type="password" required autocomplete="new-password" aria-describedby="password-hint"></label></p>
+    <p id="password-hint">${passwordMinimumMessage}</p>
+    <p><label>Confirmation <input name="passwordConfirmation" type="password" required autocomplete="new-password"></label></p>`;
   response.send(`<!doctype html>
 <html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title><main><h1>${title}</h1>
@@ -53,6 +60,16 @@ const form = document.querySelector('form');
 const status = document.querySelector('[role=status]');
 form.addEventListener('submit', async event => {
   event.preventDefault();
+  for (const field of form.querySelectorAll('input[autocomplete="new-password"]')) {
+    const length = Array.from(field.value).length - (field.value.match(/[^\\uFE0F\\uFE0E][\\uFE0F\\uFE0E]/g)?.length ?? 0);
+    const message = length < ${minPasswordChars} ? ${JSON.stringify(passwordMinimumMessage)}
+      : length > ${maxPasswordChars} ? ${JSON.stringify(passwordMaximumMessage)} : '';
+    if (message) {
+      status.textContent = message;
+      field.focus();
+      return;
+    }
+  }
   const button = form.querySelector('button');
   button.disabled = true;
   try {
@@ -66,7 +83,9 @@ form.addEventListener('submit', async event => {
       status.textContent = 'Confirmation enregistrée. Vous pouvez fermer cette page.';
       return;
     }
-    status.textContent = 'Lien inutilisable ou données invalides.';
+    const error = await result.json().catch(() => null);
+    const passwordErrors = ${JSON.stringify([passwordMinimumMessage, passwordMaximumMessage])};
+    status.textContent = passwordErrors.includes(error?.message) ? error.message : 'Lien inutilisable ou données invalides.';
   } catch {
     status.textContent = 'Service momentanément indisponible.';
   }

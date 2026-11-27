@@ -107,7 +107,7 @@ export function apiUrl(path: string) {
   return `${api}${path}`
 }
 
-export async function request<T>(path: string, method = 'GET', data?: object, token?: string, binary = false): Promise<T> {
+export async function request<T>(path: string, method = 'GET', data?: object, token?: string, binary = false, timeoutMs = 25_000): Promise<T> {
   const headers = new Headers()
   if (data && !(data instanceof FormData)) headers.set('Content-Type', 'application/json')
   if (token) headers.set('Authorization', `Bearer ${token}`)
@@ -116,7 +116,7 @@ export async function request<T>(path: string, method = 'GET', data?: object, to
     response = await fetch(apiUrl(path), {
       method, headers, credentials: 'include',
       body: data instanceof FormData ? data : data === undefined ? undefined : JSON.stringify(data),
-      signal: AbortSignal.timeout(25_000),
+      signal: AbortSignal.timeout(timeoutMs),
     })
   } catch {
     throw new ApiError(0, 'Impossible de joindre le serveur. Réessayez.')
@@ -170,15 +170,15 @@ async function activeToken() {
   return requireSameAccount(expectedId)
 }
 
-export async function protectedRequest<T>(path: string, method = 'GET', data?: object, binary = false): Promise<T> {
+export async function protectedRequest<T>(path: string, method = 'GET', data?: object, binary = false, timeoutMs?: number): Promise<T> {
   const expectedId = snapshot.user?.id
   const token = await activeToken()
   try {
-    return await request<T>(path, method, data, token, binary)
+    return await request<T>(path, method, data, token, binary, timeoutMs)
   } catch (error) {
     if (method !== 'GET' || !(error instanceof ApiError) || error.status !== 401) throw error
     await restoreSession()
-    return request<T>(path, method, data, requireSameAccount(expectedId), binary)
+    return request<T>(path, method, data, requireSameAccount(expectedId), binary, timeoutMs)
   }
 }
 
@@ -255,8 +255,12 @@ export function requestPasswordReset(email: string) {
   return request('/auth/password/forgot', 'POST', { email })
 }
 
-export async function resetPassword(token: string, password: string, passwordConfirmation: string) {
-  await request('/auth/password/reset', 'POST', { token, password, passwordConfirmation })
+export function requestFirstPassword() {
+  return protectedRequest<void>('/auth/password/setup/request', 'POST')
+}
+
+export async function completePassword(token: string, password: string, passwordConfirmation: string, firstPassword: boolean) {
+  await request(`/auth/password/${firstPassword ? 'setup' : 'reset'}`, 'POST', { token, password, passwordConfirmation })
   await revalidateSession()
 }
 

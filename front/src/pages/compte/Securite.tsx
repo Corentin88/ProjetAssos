@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { KeyRound, Link2, ShieldCheck } from 'lucide-react'
-import { authErrorMessage, changePassword, startGoogle, unlinkGoogle, useCurrentUser } from '../../lib/auth'
-import { Button, Field, Input } from '../../components/ui/form'
+import { authErrorMessage, changePassword, requestFirstPassword, startGoogle, unlinkGoogle, useCurrentUser } from '../../lib/auth'
+import { ChampMotDePasse } from '../../components/auth/ChampMotDePasse'
+import { Button, focusChampInvalide } from '../../components/ui/form'
 import { Alert } from '../../components/ui/feedback'
 import { useToast } from '../../hooks/useToast'
-import { validatePassword } from '../../hooks/common'
+import { passwordMinimumMessage, validatePassword } from '../../hooks/common'
 
 /** Section Sécurité / connexion (§5, §6, §13) */
 export function Securite() {
@@ -18,6 +19,8 @@ export function Securite() {
   const [confirmation, setConfirmation] = useState('')
   const [erreurs, setErreurs] = useState<Record<string, string>>({})
   const [enCours, setEnCours] = useState(false)
+  const [lienEnvoye, setLienEnvoye] = useState(false)
+  const [erreurEnvoi, setErreurEnvoi] = useState('')
 
   if (!user) return null
   const aGoogle = user.authMethods.includes('google')
@@ -25,18 +28,18 @@ export function Securite() {
 
   return (
     <div className="grid gap-8 lg:grid-cols-2">
-      {/* Modification du mot de passe (§6) */}
+      {/* Définition ou modification du mot de passe (§6) */}
       <section aria-labelledby="titre-mdp" className="rounded-2xl border border-line bg-white p-6">
         <h2 id="titre-mdp" className="flex items-center gap-2 text-xl text-forest">
           <KeyRound aria-hidden="true" className="h-6 w-6" />
-          Changer mon mot de passe
+          Mot de passe
         </h2>
-        <form
+        {aMotDePasse ? <form
           className="mt-5 flex flex-col gap-5"
           noValidate
           onSubmit={async (e) => {
             e.preventDefault()
-            if (enCours || !aMotDePasse) return
+            if (enCours) return
             const errs: Record<string, string> = {}
             if (!ancien) errs.ancien = 'Veuillez saisir votre mot de passe actuel.'
             const errNouveau = validatePassword(nouveau)
@@ -44,6 +47,7 @@ export function Securite() {
             if (confirmation !== nouveau) errs.confirmation = 'La confirmation ne correspond pas au nouveau mot de passe.'
             if (Object.keys(errs).length) {
               setErreurs(errs)
+              focusChampInvalide(e.currentTarget)
               return
             }
             setEnCours(true)
@@ -58,62 +62,59 @@ export function Securite() {
             }
           }}
         >
-          <Field label="Mot de passe actuel" htmlFor="s-ancien" required error={erreurs.ancien}>
-            <Input
-              id="s-ancien"
-              type="password"
-              value={ancien}
-              onChange={(e) => {
-                setAncien(e.target.value)
-                setErreurs((er) => ({ ...er, ancien: '' }))
-              }}
-              invalid={!!erreurs.ancien}
-              describedBy={erreurs.ancien ? 's-ancien-err' : undefined}
-              autoComplete="current-password"
-            />
-          </Field>
-          <Field
+          <ChampMotDePasse id="s-ancien" label="Mot de passe actuel" value={ancien} erreur={erreurs.ancien}
+            onChange={value => { setAncien(value); setErreurs(er => ({ ...er, ancien: '' })) }} />
+          <ChampMotDePasse
+            id="s-nouveau"
             label="Nouveau mot de passe"
-            htmlFor="s-nouveau"
-            required
-            error={erreurs.nouveau}
-            hint="Entre 12 et 128 caractères."
-          >
-            <Input
-              id="s-nouveau"
-              type="password"
-              value={nouveau}
-              onChange={(e) => {
-                setNouveau(e.target.value)
-                setErreurs((er) => ({ ...er, nouveau: '' }))
-              }}
-              invalid={!!erreurs.nouveau}
-              describedBy={erreurs.nouveau ? 's-nouveau-err' : undefined}
-              autoComplete="new-password"
-            />
-          </Field>
-          <Field label="Confirmer le nouveau mot de passe" htmlFor="s-conf" required error={erreurs.confirmation}>
-            <Input
-              id="s-conf"
-              type="password"
-              value={confirmation}
-              onChange={(e) => {
-                setConfirmation(e.target.value)
-                setErreurs((er) => ({ ...er, confirmation: '' }))
-              }}
-              invalid={!!erreurs.confirmation}
-              describedBy={erreurs.confirmation ? 's-conf-err' : undefined}
-              autoComplete="new-password"
-            />
-          </Field>
+            value={nouveau}
+            erreur={erreurs.nouveau}
+            aide={passwordMinimumMessage}
+            autoComplete="new-password"
+            onChange={value => { setNouveau(value); setErreurs(er => ({ ...er, nouveau: '' })) }}
+          />
+          <ChampMotDePasse id="s-conf" label="Confirmer le nouveau mot de passe" value={confirmation}
+            erreur={erreurs.confirmation} autoComplete="new-password"
+            onChange={value => { setConfirmation(value); setErreurs(er => ({ ...er, confirmation: '' })) }} />
           <Alert kind="attention" title="Après la modification">
             Toutes les sessions existantes sont invalidées et vous devez vous reconnecter avec le
             nouveau mot de passe.
           </Alert>
           <div>
-            <Button type="submit" disabled={enCours || !aMotDePasse}>Modifier mon mot de passe</Button>
+            <Button type="submit" disabled={enCours}>Modifier mon mot de passe</Button>
           </div>
-        </form>
+        </form> : (
+          <div className="mt-5 flex flex-col gap-4">
+            <p>Vous n’avez pas encore défini de mot de passe pour ce compte.</p>
+            {aGoogle && (
+              <>
+                <p className="text-mist">Vous recevrez un lien à l’adresse e-mail de votre compte. Il sera valable 30 minutes.</p>
+                <div>
+                  <Button
+                    disabled={enCours}
+                    onClick={async () => {
+                      setErreurEnvoi('')
+                      setLienEnvoye(false)
+                      setEnCours(true)
+                      try {
+                        await requestFirstPassword()
+                        setLienEnvoye(true)
+                      } catch (error) {
+                        setErreurEnvoi(authErrorMessage(error))
+                      } finally {
+                        setEnCours(false)
+                      }
+                    }}
+                  >
+                    {enCours ? 'Envoi en cours…' : 'Définir un mot de passe'}
+                  </Button>
+                </div>
+                {lienEnvoye && <Alert kind="succes" title="Lien envoyé">Consultez votre boîte e-mail pour définir votre mot de passe.</Alert>}
+                {erreurEnvoi && <Alert kind="erreur" title="Envoi impossible">{erreurEnvoi}</Alert>}
+              </>
+            )}
+          </div>
+        )}
       </section>
 
       {/* Méthodes de connexion : association Google explicite (§5) */}
@@ -155,12 +156,9 @@ export function Securite() {
           <div className="mt-5">
             <Button
               variant="secondaire"
-              disabled={enCours}
+              disabled={enCours || !aMotDePasse}
+              aria-describedby={!aMotDePasse ? 'derniere-connexion' : undefined}
               onClick={async () => {
-                if (user.authMethods.length <= 1) {
-                  toast('Impossible de dissocier la dernière méthode de connexion active.', 'erreur')
-                  return
-                }
                 setEnCours(true)
                 try {
                   await unlinkGoogle()
@@ -175,6 +173,11 @@ export function Securite() {
             >
               Dissocier mon compte Google
             </Button>
+            {!aMotDePasse && (
+              <p id="derniere-connexion" className="mt-3 text-[0.9375rem] text-mist">
+                Google est votre seul moyen de connexion. Définissez un mot de passe avant de dissocier votre compte Google.
+              </p>
+            )}
           </div>
         ) : (
           <div className="mt-5">

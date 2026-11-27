@@ -9,9 +9,11 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { CodeChallengeMethod, OAuth2Client } from 'google-auth-library';
 import { isEmail } from 'class-validator';
+import { Prisma } from '../../generated/prisma/client.js';
 import { RuntimeConfig } from '../config/runtime.module.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { normalizeEmail } from './auth.dto.js';
+import { GoogleAccountAlreadyLinkedError } from './google-account-already-linked.error.js';
 import {
   lockUser,
   opaqueToken,
@@ -114,26 +116,41 @@ export class GoogleService {
         const user = await tx.user.findUniqueOrThrow({
           where: { id: flow.sub },
         });
-        if (user.googleId && user.googleId !== identity.sub)
-          throw new ConflictException();
-        if (!user.googleId) {
+        if (user.googleId === identity.sub) return;
+        const existingOwner = await tx.user.findUnique({
+          where: { googleId: identity.sub },
+          select: { id: true },
+        });
+        if (existingOwner && existingOwner.id !== user.id)
+          throw new GoogleAccountAlreadyLinkedError();
+        if (user.googleId) throw new ConflictException();
+
+        try {
           await tx.user.update({
             where: { id: user.id },
             data: { googleId: identity.sub },
           });
-          await tx.profile.update({
-            where: { userId: user.id },
-            data: { googleAvatar: identity.picture },
-          });
-          await tx.notification.create({
-            data: {
-              userId: user.id,
-              type: 'ACCOUNT',
-              title: 'Connexion Google',
-              message: 'Une connexion Google a été associée à votre compte.',
-            },
-          });
+        } catch (error) {
+          // Seul googleId change parmi les champs uniques. L’index couvre deux liaisons concurrentes.
+          if (
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2002'
+          )
+            throw new GoogleAccountAlreadyLinkedError();
+          throw error;
         }
+        await tx.profile.update({
+          where: { userId: user.id },
+          data: { googleAvatar: identity.picture },
+        });
+        await tx.notification.create({
+          data: {
+            userId: user.id,
+            type: 'ACCOUNT',
+            title: 'Connexion Google',
+            message: 'Une connexion Google a été associée à votre compte.',
+          },
+        });
       });
       return null;
     }

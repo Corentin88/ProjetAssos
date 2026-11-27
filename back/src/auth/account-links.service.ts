@@ -7,8 +7,11 @@ import { createTransport } from 'nodemailer';
 import type { AccountTokenPurpose } from '../../generated/prisma/client.js';
 import { RuntimeConfig } from '../config/runtime.module.js';
 
-const subjects: Record<AccountTokenPurpose, string> = {
+type MailPurpose = AccountTokenPurpose | 'FIRST_PASSWORD';
+
+const subjects: Record<MailPurpose, string> = {
   PASSWORD_RESET: 'Réinitialiser votre mot de passe',
+  FIRST_PASSWORD: 'Définir votre premier mot de passe',
   INVITATION: 'Activer votre compte ProjetAssos',
   EMAIL_CHANGE: 'Confirmer votre nouvelle adresse',
 };
@@ -19,13 +22,20 @@ export const accountLinkMinutes = {
   EMAIL_CHANGE: 60,
 };
 
-export function passwordResetMail(link: string) {
-  const intro =
-    'Vous avez demandé à réinitialiser le mot de passe de votre compte ProjetAssos.';
+function passwordMail(link: string, firstPassword: boolean) {
+  const title = firstPassword
+    ? 'Définition du premier mot de passe'
+    : 'Réinitialisation du mot de passe';
+  const intro = firstPassword
+    ? 'Vous avez demandé à définir le premier mot de passe de votre compte ProjetAssos.'
+    : 'Vous avez demandé à réinitialiser le mot de passe de votre compte ProjetAssos.';
   const validity = `Ce lien est valable ${accountLinkMinutes.PASSWORD_RESET} minutes et ne peut servir qu’une fois.`;
-  const ignore =
-    'Si vous n’avez pas demandé cette réinitialisation, vous pouvez ignorer cet e-mail.';
-  const action = 'Réinitialiser mon mot de passe';
+  const ignore = firstPassword
+    ? 'Si vous n’avez pas demandé cette opération, vous pouvez ignorer cet e-mail.'
+    : 'Si vous n’avez pas demandé cette réinitialisation, vous pouvez ignorer cet e-mail.';
+  const action = firstPassword
+    ? 'Définir mon premier mot de passe'
+    : 'Réinitialiser mon mot de passe';
   const url = link
     .replaceAll('&', '&amp;')
     .replaceAll('"', '&quot;')
@@ -40,7 +50,7 @@ export function passwordResetMail(link: string) {
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" bgcolor="#ffffff" style="max-width:560px">
 <tr><td bgcolor="#244d3b" style="padding:20px 24px;color:#ffffff;font-size:20px;font-weight:bold">ProjetAssos</td></tr>
 <tr><td style="padding:24px;font-size:16px;line-height:1.6">
-<h1 style="font-size:24px;line-height:1.25;margin:0 0 16px">Réinitialisation du mot de passe</h1>
+<h1 style="font-size:24px;line-height:1.25;margin:0 0 16px">${title}</h1>
 <p>${intro}</p>
 <table role="presentation" cellspacing="0" cellpadding="0"><tr><td bgcolor="#244d3b" style="padding:12px 18px">
 <a href="${url}" style="display:inline-block;color:#ffffff;font-weight:bold;text-decoration:underline">${action}</a>
@@ -93,10 +103,14 @@ export class AccountLinksService {
     if (!this.transport) throw new ServiceUnavailableException();
   }
 
-  async send(email: string, purpose: AccountTokenPurpose, token: string) {
-    if (purpose === 'PASSWORD_RESET') {
-      const link = `${this.config.frontOrigin}/#/reinitialiser-mot-de-passe?token=${encodeURIComponent(token)}`;
-      const { text, html } = passwordResetMail(link);
+  async send(email: string, purpose: MailPurpose, token: string) {
+    if (purpose === 'PASSWORD_RESET' || purpose === 'FIRST_PASSWORD') {
+      const firstPassword = purpose === 'FIRST_PASSWORD';
+      const route = firstPassword
+        ? 'definir-mot-de-passe'
+        : 'reinitialiser-mot-de-passe';
+      const link = `${this.config.frontOrigin}/#/${route}?token=${encodeURIComponent(token)}`;
+      const { text, html } = passwordMail(link, firstPassword);
       return this.sendText(email, subjects[purpose], text, html);
     }
     const path = purpose.toLowerCase().replaceAll('_', '-');

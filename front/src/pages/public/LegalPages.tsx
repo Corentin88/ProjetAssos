@@ -239,28 +239,3 @@ export function Accessibilite() {
     </div>
   )
 }
-
-/** Page 404 */
-export function PageIntrouvable() {
-  return (
-    <div className="mx-auto max-w-3xl px-4 py-20 text-center">
-      <p className="text-6xl font-bold text-forest">404</p>
-      <h1 className="mt-4 text-forest">Cette page n'existe pas (ou plus)</h1>
-      <p className="mt-3 text-mist">
-        Le contenu demandé a peut-être été déplacé, retiré ou n'a jamais existé. Vous pouvez
-        revenir à l'accueil, consulter les actualités ou utiliser la recherche.
-      </p>
-      <div className="mt-8 flex flex-wrap justify-center gap-4">
-        <Link to="/" className="inline-flex min-h-[48px] items-center rounded-xl bg-forest px-6 font-bold text-white hover:bg-forest-dark">
-          Retour à l'accueil
-        </Link>
-        <Link to="/actualites" className="inline-flex min-h-[48px] items-center rounded-xl border border-forest bg-white px-6 font-bold text-forest hover:bg-leaf-pale">
-          Voir les actualités
-        </Link>
-        <Link to="/actualites?avancee=1" className="inline-flex min-h-[48px] items-center rounded-xl border border-forest bg-white px-6 font-bold text-forest hover:bg-leaf-pale">
-          Rechercher un contenu
-        </Link>
-      </div>
-    </div>
-  )
-}

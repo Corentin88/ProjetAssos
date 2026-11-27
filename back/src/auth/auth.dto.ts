@@ -10,6 +10,7 @@ import {
   Max,
   MaxLength,
   Min,
+  MinLength,
   ValidateIf,
 } from 'class-validator';
 import {
@@ -18,6 +19,7 @@ import {
   UserRole,
   UserStatus,
 } from '../../generated/prisma/client.js';
+import { NewPasswordLength, PasswordMaxLength } from './password-validation.js';
 
 export function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
@@ -61,7 +63,8 @@ export class AdminProfileDto extends NamesDto {
 
 export class LoginDto extends EmailDto {
   @IsString()
-  @Length(1, 128)
+  @MinLength(1)
+  @PasswordMaxLength()
   password: string;
 }
 
@@ -86,7 +89,7 @@ export class RegisterDto extends NamesDto {
   email: string;
 
   @IsString()
-  @Length(12, 128)
+  @NewPasswordLength()
   password: string;
 }
 
@@ -98,25 +101,26 @@ export class TokenDto {
 
 export class CompletePasswordDto extends TokenDto {
   @IsString()
-  @Length(12, 128)
+  @NewPasswordLength()
   password: string;
 
   @IsString()
-  @Length(12, 128)
+  @NewPasswordLength()
   passwordConfirmation: string;
 }
 
 export class ChangePasswordDto {
   @IsString()
-  @Length(1, 128)
+  @MinLength(1)
+  @PasswordMaxLength()
   currentPassword: string;
 
   @IsString()
-  @Length(12, 128)
+  @NewPasswordLength()
   password: string;
 
   @IsString()
-  @Length(12, 128)
+  @NewPasswordLength()
   passwordConfirmation: string;
 }
 

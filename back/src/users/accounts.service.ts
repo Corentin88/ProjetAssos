@@ -2,13 +2,15 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client.js';
-import type { AccountTokenPurpose } from '../../generated/prisma/client.js';
+import type { AccountTokenPurpose, User } from '../../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { RuntimeConfig } from '../config/runtime.module.js';
 import type {
@@ -51,6 +53,12 @@ const accountFields = {
   passwordSetupPending: true,
   profile: { select: profileFields },
 } satisfies Prisma.UserSelect;
+
+function canSetFirstPassword(
+  user: Pick<User, 'googleId' | 'passwordHash' | 'passwordSetupPending'>,
+) {
+  return !!user.googleId && !user.passwordHash && !user.passwordSetupPending;
+}
 
 function presentAccount(
   account: Prisma.UserGetPayload<{ select: typeof accountFields }>,
@@ -242,6 +250,33 @@ export class AccountsService {
     if (token) await this.mail.send(email, 'PASSWORD_RESET', token);
   }
 
+  async requestFirstPassword(principal: Principal) {
+    this.mail.assertConfigured();
+    const { email, token } = await this.prisma.$transaction(async (tx) => {
+      await this.authorize(tx, principal, principal.userId, false);
+      const user = await tx.user.findUniqueOrThrow({
+        where: { id: principal.userId },
+      });
+      if (!canSetFirstPassword(user)) throw new ConflictException();
+
+      // Le verrou utilisateur borne les envois par compte, indépendamment de l’adresse IP.
+      const recentLink = await tx.accountToken.findFirst({
+        where: {
+          userId: user.id,
+          purpose: 'PASSWORD_RESET',
+          createdAt: { gt: new Date(Date.now() - 60_000) },
+        },
+        select: { id: true },
+      });
+      if (recentLink) throw new HttpException('', HttpStatus.TOO_MANY_REQUESTS);
+      return {
+        email: user.email,
+        token: await this.issue(tx, user.id, 'PASSWORD_RESET'),
+      };
+    });
+    await this.mail.send(email, 'FIRST_PASSWORD', token);
+  }
+
   async requestEmailChange(
     principal: Principal,
     userId: string,
@@ -318,13 +353,20 @@ export class AccountsService {
   }
 
   async completePassword(
-    purpose: 'INVITATION' | 'PASSWORD_RESET',
+    purpose: 'INVITATION' | 'PASSWORD_RESET' | 'FIRST_PASSWORD',
     dto: CompletePasswordDto,
   ) {
     if (dto.password !== dto.passwordConfirmation)
       throw new BadRequestException();
-    await this.consume(purpose, dto.token, async (tx, token) => {
-      if (token.user.passwordSetupPending !== (purpose === 'INVITATION'))
+    // Les deux parcours partagent le jeton de mot de passe et exigent des états de compte distincts.
+    const tokenPurpose =
+      purpose === 'FIRST_PASSWORD' ? 'PASSWORD_RESET' : purpose;
+    await this.consume(tokenPurpose, dto.token, async (tx, token) => {
+      if (
+        token.user.passwordSetupPending !== (purpose === 'INVITATION') ||
+        (purpose === 'FIRST_PASSWORD' && !canSetFirstPassword(token.user)) ||
+        (purpose === 'PASSWORD_RESET' && !token.user.passwordHash)
+      )
         throw new BadRequestException();
       await tx.user.update({
         where: { id: token.userId },

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { ArrowLeft, CheckCircle2, Eye, EyeOff, KeyRound, LogIn, Mail, UserPlus } from 'lucide-react'
-import { ApiError, authErrorMessage, login, register, requestPasswordReset, resetPassword, startGoogle, useAuthSession } from '../../lib/auth'
+import { ArrowLeft, CheckCircle2, KeyRound, LogIn, Mail, UserPlus } from 'lucide-react'
+import { ApiError, authErrorMessage, completePassword, login, register, requestPasswordReset, startGoogle, useAuthSession } from '../../lib/auth'
+import { ChampMotDePasse } from '../../components/auth/ChampMotDePasse'
 import { Button, Checkbox, Field, Input, focusChampInvalide } from '../../components/ui/form'
 import { Alert } from '../../components/ui/feedback'
-import { useCountdown, validateEmail, validatePassword } from '../../hooks/common'
+import { passwordMinimumMessage, useCountdown, validateEmail, validatePassword } from '../../hooks/common'
 import { useToast } from '../../hooks/useToast'
 
 const CLASSE_PAGE = 'mx-auto max-w-xl px-4 py-6 sm:py-10'
@@ -13,53 +14,6 @@ const RETOUR_GOOGLE = 'projetassos_retour_google'
 
 function destinationLocale(depuis?: string | null) {
   return depuis && /^\/(?![\/\\])/.test(depuis) ? depuis : '/mon-compte'
-}
-
-function ChampMotDePasse({
-  id,
-  value,
-  onChange,
-  erreur,
-  aide,
-  label,
-  autoComplete = 'current-password',
-}: {
-  id: string
-  value: string
-  onChange: (v: string) => void
-  erreur?: string
-  aide?: string
-  label: string
-  autoComplete?: string
-}) {
-  const [visible, setVisible] = useState(false)
-  const description = [aide && `${id}-hint`, erreur && `${id}-err`].filter(Boolean).join(' ')
-  return (
-      <Field label={label} htmlFor={id} required error={erreur} hint={aide}>
-        <div className="relative">
-          <Input
-            id={id}
-            type={visible ? 'text' : 'password'}
-            required
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            invalid={!!erreur}
-            describedBy={description || undefined}
-            autoComplete={autoComplete}
-            className="pr-14"
-          />
-          <button
-            type="button"
-            onClick={() => setVisible((v) => !v)}
-            aria-controls={id}
-            className="absolute right-1 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-lg text-mist hover:bg-leaf-pale hover:text-forest"
-          >
-            {visible ? <EyeOff aria-hidden="true" className="h-5 w-5" /> : <Eye aria-hidden="true" className="h-5 w-5" />}
-            <span className="sr-only">{visible ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}</span>
-          </button>
-        </div>
-      </Field>
-  )
 }
 
 /** Connexion classique + Google (§4, §5) */
@@ -347,7 +301,7 @@ export function Inscription() {
         <ChampMotDePasse
           id="in-mdp"
           label="Mot de passe"
-          aide="Entre 12 et 128 caractères."
+          aide={passwordMinimumMessage}
           erreur={erreurs.mdp}
           value={valeurs.mdp}
           onChange={(v) => set('mdp', v)}
@@ -487,13 +441,18 @@ export function MotDePasseOublie() {
 }
 
 /** Réinitialisation (§7) : définition du nouveau mot de passe */
-export function ReinitialiserMotDePasse() {
+export function ConfirmerMotDePasse({ premierMotDePasse = false }: { premierMotDePasse?: boolean }) {
   const location = useLocation()
-  return <FormulaireReinitialisation key={location.key} recherche={location.search} />
+  return <FormulaireMotDePasse key={location.key} recherche={location.search} route={location.pathname} premierMotDePasse={premierMotDePasse} />
 }
 
-function FormulaireReinitialisation({ recherche }: { recherche: string }) {
+function FormulaireMotDePasse({ recherche, route, premierMotDePasse }: {
+  recherche: string
+  route: string
+  premierMotDePasse: boolean
+}) {
   const navigate = useNavigate()
+  const titre = premierMotDePasse ? 'Définir mon premier mot de passe' : 'Nouveau mot de passe'
   const [token] = useState(() => new URLSearchParams(recherche).get('token'))
   const [mdp, setMdp] = useState('')
   const [confirmation, setConfirmation] = useState('')
@@ -506,9 +465,9 @@ function FormulaireReinitialisation({ recherche }: { recherche: string }) {
     // Le jeton reste en mémoire après l’ouverture du lien.
     if (new URLSearchParams(recherche).has('token')) {
       const { pathname, search } = window.location
-      window.history.replaceState(window.history.state, '', `${pathname}${search}#/reinitialiser-mot-de-passe`)
+      window.history.replaceState(window.history.state, '', `${pathname}${search}#${route}`)
     }
-  }, [recherche])
+  }, [recherche, route])
 
   useEffect(() => {
     if (!termine) return
@@ -518,23 +477,25 @@ function FormulaireReinitialisation({ recherche }: { recherche: string }) {
 
   return (
     <div className={CLASSE_PAGE}>
-      <h1 className="text-forest">Nouveau mot de passe</h1>
+      <h1 className="text-forest">{titre}</h1>
       {termine ? (
         <div className={CLASSE_FORMULAIRE}>
           <CheckCircle2 aria-hidden="true" className="h-12 w-12 text-leaf" />
-          <Alert kind="succes" title="Mot de passe modifié">
+          <Alert kind="succes" title={premierMotDePasse ? 'Mot de passe défini' : 'Mot de passe modifié'}>
             <p>
-              Vous allez être redirigé vers la connexion dans quelques secondes.
+              {premierMotDePasse
+                ? 'Vous pouvez désormais vous connecter avec votre mot de passe ou avec Google.'
+                : 'Vous allez être redirigé vers la connexion dans quelques secondes.'}
             </p>
           </Alert>
           <Button autoFocus onClick={() => navigate('/connexion', { replace: true })}>Aller à la connexion</Button>
         </div>
       ) : lienInvalide ? (
         <div className={CLASSE_FORMULAIRE}>
-          <Alert kind="attention" title="Lien de réinitialisation inutilisable">
+          <Alert kind="attention" title={premierMotDePasse ? 'Lien de définition inutilisable' : 'Lien de réinitialisation inutilisable'}>
             Ce lien est invalide, a expiré ou a déjà été utilisé.
           </Alert>
-          <Link to="/mot-de-passe-oublie" className="font-bold text-forest underline">
+          <Link to={premierMotDePasse ? '/mon-compte/securite' : '/mot-de-passe-oublie'} className="font-bold text-forest underline">
             Demander un nouveau lien
           </Link>
         </div>
@@ -556,7 +517,7 @@ function FormulaireReinitialisation({ recherche }: { recherche: string }) {
             setEnCours(true)
             setErreurs({})
             try {
-              await resetPassword(token, mdp, confirmation)
+              await completePassword(token, mdp, confirmation, premierMotDePasse)
               setMdp('')
               setConfirmation('')
               setTermine(true)
@@ -568,16 +529,16 @@ function FormulaireReinitialisation({ recherche }: { recherche: string }) {
             }
           }}
           noValidate
-          aria-label="Définition du nouveau mot de passe"
+          aria-label={titre}
         >
           <p className="text-mist">
             Choisissez un nouveau mot de passe, puis saisissez-le une seconde fois pour le confirmer.
           </p>
-          {erreurs.formulaire ? <Alert kind="erreur" title="Réinitialisation impossible">{erreurs.formulaire}</Alert> : null}
+          {erreurs.formulaire ? <Alert kind="erreur" title={premierMotDePasse ? 'Mot de passe non enregistré' : 'Réinitialisation impossible'}>{erreurs.formulaire}</Alert> : null}
           <fieldset className="flex flex-col gap-4" disabled={enCours} aria-busy={enCours}>
             <legend className="sr-only">Nouveau mot de passe et confirmation</legend>
             <ChampMotDePasse id="r-mdp" label="Nouveau mot de passe" value={mdp} erreur={erreurs.mdp}
-              aide="Entre 12 et 128 caractères." autoComplete="new-password"
+              aide={passwordMinimumMessage} autoComplete="new-password"
               onChange={value => { setMdp(value); setErreurs(er => ({ ...er, mdp: '' })) }} />
             <ChampMotDePasse id="r-mdp2" label="Confirmer le nouveau mot de passe" value={confirmation}
               erreur={erreurs.confirmation} autoComplete="new-password"

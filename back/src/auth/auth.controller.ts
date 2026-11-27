@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import type { CookieOptions, Request, Response } from 'express';
 import { RuntimeConfig } from '../config/runtime.module.js';
+import { httpErrorStatus } from '../http.js';
 import { AccountsService } from '../users/accounts.service.js';
 import {
   AccessGuard,
@@ -30,6 +31,7 @@ import {
   TokenDto,
 } from './auth.dto.js';
 import { AuthService } from './auth.service.js';
+import { GoogleAccountAlreadyLinkedError } from './google-account-already-linked.error.js';
 import { GoogleService } from './google.service.js';
 import { sendLinkPage } from './link-page.js';
 import { SessionService } from './session.service.js';
@@ -168,6 +170,20 @@ export class AuthController {
     return this.accounts.completePassword('PASSWORD_RESET', dto);
   }
 
+  @Post('password/setup/request')
+  @HttpCode(202)
+  @UseGuards(AccessGuard, AuthRateGuard)
+  requestFirstPassword(@CurrentUser() principal: Principal) {
+    return this.accounts.requestFirstPassword(principal);
+  }
+
+  @Post('password/setup')
+  @HttpCode(204)
+  @UseGuards(AuthRateGuard)
+  completeFirstPassword(@Body() dto: CompletePasswordDto) {
+    return this.accounts.completePassword('FIRST_PASSWORD', dto);
+  }
+
   @Post('invitations/complete')
   @HttpCode(204)
   @UseGuards(AuthRateGuard)
@@ -223,12 +239,29 @@ export class AuthController {
     @Query('code') code: unknown,
     @Query('state') state: unknown,
   ) {
+    response.vary('Accept');
     response.clearCookie(googleCookie, this.cookie);
-    const session = await this.google.finish(
-      readCookie(request, googleCookie),
-      code,
-      state,
-    );
+    let session: Awaited<ReturnType<GoogleService['finish']>>;
+    try {
+      session = await this.google.finish(
+        readCookie(request, googleCookie),
+        code,
+        state,
+      );
+    } catch (error) {
+      // Le callback est ouvert par navigation HTML. En cas d’égalité, privilégier le contrat JSON.
+      if (
+        httpErrorStatus(error) !== 409 ||
+        request.accepts(['json', 'html']) !== 'html'
+      )
+        throw error;
+      const reason =
+        error instanceof GoogleAccountAlreadyLinkedError
+          ? `?motif=${GoogleAccountAlreadyLinkedError.code}`
+          : '';
+      response.redirect(303, `${this.frontOrigin}/#/erreur/409${reason}`);
+      return;
+    }
     if (session)
       this.setRefresh(
         response,

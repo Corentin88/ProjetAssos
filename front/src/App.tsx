@@ -1,6 +1,6 @@
 import { lazy, useEffect, useRef } from 'react'
 import { loadNotifications } from './lib/community'
-import { matchPath, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { matchPath, Route, Routes, useLocation } from 'react-router-dom'
 import { ErreurBoundary } from './components/ErreurBoundary'
 import { ToastProvider } from './hooks/useToast'
 import { PublicLayout } from './components/layout/PublicLayout'
@@ -16,9 +16,10 @@ import { AssociationPage, Contact } from './pages/public/Contact'
 import { Actualites } from './pages/public/Actualites'
 import { RedirectionRecherche } from './pages/public/Recherche'
 import { ArticleDetail } from './pages/public/ArticleDetail'
-import { Connexion, Inscription, MotDePasseOublie, ReinitialiserMotDePasse } from './pages/public/AuthPages'
+import { ConfirmerMotDePasse, Connexion, Inscription, MotDePasseOublie } from './pages/public/AuthPages'
 import { ProfilPublic, ProfilPublicCommentaires } from './pages/public/ProfilPublic'
-import { Accessibilite, Confidentialite, MentionsLegales, PageIntrouvable } from './pages/public/LegalPages'
+import { Accessibilite, Confidentialite, MentionsLegales } from './pages/public/LegalPages'
+import { PageConflit, PageIntrouvable } from './pages/public/ErrorPages'
 
 // Espace personnel (§13)
 import { MonCompte } from './pages/compte/MonCompte'
@@ -94,7 +95,8 @@ export default function App() {
             <Route path="/connexion" element={<Connexion />} />
             <Route path="/inscription" element={<Inscription />} />
             <Route path="/mot-de-passe-oublie" element={<MotDePasseOublie />} />
-            <Route path="/reinitialiser-mot-de-passe" element={<ReinitialiserMotDePasse />} />
+            <Route path="/reinitialiser-mot-de-passe" element={<ConfirmerMotDePasse />} />
+            <Route path="/definir-mot-de-passe" element={<ConfirmerMotDePasse premierMotDePasse />} />
 
             {/* Profils publics (§14, §15) — réservés aux utilisateurs connectés */}
             <Route
@@ -128,6 +130,7 @@ export default function App() {
               <Route path="supprimer" element={<SuppressionCompte />} />
             </Route>
 
+            <Route path="/erreur/409" element={<PageConflit />} />
             <Route path="*" element={<PageIntrouvable />} />
           </Route>
 
@@ -154,7 +157,6 @@ export default function App() {
             <Route path="association" element={<AssociationAdmin />} />
             <Route path="statistiques" element={<StatistiquesAdmin />} />
             <Route path="journal" element={<JournalAdmin />} />
-            <Route path="*" element={<Navigate to="/admin" replace />} />
           </Route>
         </Routes>
       </ToastProvider>
