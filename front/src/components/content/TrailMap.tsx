@@ -49,7 +49,7 @@ function routeGeometry(segments: TrailSample[][]) {
   return { points, bounds, slopes, lines: lines.map(line => line.map(point => point.coordinates)) }
 }
 
-export function TrailMap({ preview, path, secure, settings = defaultTrailMapSettings, showTimes = true, showAltitude = true, showDistance = true }: {
+export function TrailMap({ preview, path, secure = false, settings = defaultTrailMapSettings, showTimes = true, showAltitude = true, showDistance = true }: {
   preview?: TrailMapPreview | null
   path?: string
   secure?: boolean
@@ -71,10 +71,10 @@ export function TrailMap({ preview, path, secure, settings = defaultTrailMapSett
   </p>
 
   return <InteractiveTrail segments={route} pending={pending} unavailable={Boolean(error)}
-    settings={settings} showTimes={showTimes} showAltitude={showAltitude} showDistance={showDistance} />
+    settings={settings} showTimes={showTimes} showAltitude={showAltitude} showDistance={showDistance} showMapLinks={secure} />
 }
 
-function InteractiveTrail({ segments, pending, unavailable, settings, showTimes, showAltitude, showDistance }: {
+function InteractiveTrail({ segments, pending, unavailable, settings, showTimes, showAltitude, showDistance, showMapLinks }: {
   segments: TrailSample[][]
   pending: boolean
   unavailable: boolean
@@ -82,6 +82,7 @@ function InteractiveTrail({ segments, pending, unavailable, settings, showTimes,
   showTimes: boolean
   showAltitude: boolean
   showDistance: boolean
+  showMapLinks: boolean
 }) {
   const geometry = useMemo(() => routeGeometry(segments), [segments])
   const [handle, setMap] = useState<OsmMapHandle>()
@@ -211,9 +212,11 @@ function InteractiveTrail({ segments, pending, unavailable, settings, showTimes,
           {showAltitude && <span>{selected?.elevation != null ? `${formatNombre(selected.elevation)} m d’altitude` : 'Altitude non renseignée'}</span>}
           {showTimes && selected?.time && <span>Passage à {passageTime.format(new Date(selected.time))}</span>}
         </p>}
-        <a className="w-fit font-bold text-forest underline underline-offset-4"
-          href={`https://www.openstreetmap.org/#map=14/${latitude}/${longitude}`}>Voir les environs sur OpenStreetMap</a>
-        <a className="w-fit underline underline-offset-4" href="https://www.openstreetmap.org/fixthemap">Signaler un problème sur la carte</a>
+        {showMapLinks && <>
+          <a className="w-fit font-bold text-forest underline underline-offset-4"
+            href={`https://www.openstreetmap.org/#map=14/${latitude}/${longitude}`}>Voir les environs sur OpenStreetMap</a>
+          <a className="w-fit underline underline-offset-4" href="https://www.openstreetmap.org/fixthemap">Signaler un problème sur la carte</a>
+        </>}
       </div>
       {canProfile && <Button className="mt-3" size="petit" variant="secondaire" aria-expanded={profileOpen}
         aria-controls={profileId} onClick={() => setProfileOpen(open => !open)}>

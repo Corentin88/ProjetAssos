@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  ForbiddenException,
   HttpCode,
   Injectable,
   Module,
@@ -30,7 +31,8 @@ import {
   BrowserOriginGuard,
   CurrentUser,
 } from '../auth/access.guard.js';
-import { AvatarDto, NamesDto } from '../auth/auth.dto.js';
+import { AvatarDto, NamesDto, PublicNameDto } from '../auth/auth.dto.js';
+import { formatPublicName } from './public-name.js';
 import { lockUser, SessionService } from '../auth/session.service.js';
 import type { Principal } from '../auth/session.service.js';
 import { imageFormat } from '../content/image-format.js';
@@ -64,7 +66,7 @@ class ProfilesService {
         lastActiveAt: true,
         passwordHash: true,
         googleId: true,
-        profile: { select: profileFields },
+        profile: { select: { ...profileFields, publicNameFormat: true } },
         accountTokens: {
           where: {
             purpose: 'EMAIL_CHANGE',
@@ -89,6 +91,8 @@ class ProfilesService {
       firstName: user.profile.firstName,
       lastName: user.profile.lastName,
       avatar: presentAvatar(user.id, user.profile),
+      publicNameFormat: user.role === 'ADMIN' || user.profile.publicNameFormat !== 'ADMIN'
+        ? user.profile.publicNameFormat : 'INITIAL',
       hasPersonalAvatar: Boolean(user.profile.avatarMediaId),
       googleAvatar: user.googleId ? user.profile.googleAvatar : null,
       pendingEmail: user.accountTokens[0]?.newEmail ?? null,
@@ -102,13 +106,16 @@ class ProfilesService {
   async publicProfile(userId: string) {
     const user = await this.prisma.user.findFirst({
       where: { id: userId, passwordSetupPending: false },
-      select: { createdAt: true, profile: { select: profileFields } },
+      select: { createdAt: true, role: true, profile: { select: { ...profileFields, publicNameFormat: true } } },
     });
     if (!user?.profile) throw new NotFoundException();
+    const format = user.role !== 'ADMIN' && user.profile.publicNameFormat === 'ADMIN'
+      ? 'INITIAL' : user.profile.publicNameFormat;
     return {
       id: userId,
-      firstName: user.profile.firstName,
-      lastInitial: Array.from(user.profile.lastName)[0] ?? '',
+      firstName: format === 'ADMIN' ? 'Admin' : user.profile.firstName,
+      lastInitial: format === 'ADMIN' ? '' : Array.from(user.profile.lastName)[0] ?? '',
+      publicName: formatPublicName(user.profile, format),
       createdAt: user.createdAt,
       avatar: presentAvatar(userId, user.profile),
       commentCount: await this.prisma.comment.count({
@@ -116,6 +123,7 @@ class ProfilesService {
           userId,
           status: 'PUBLISHED',
           article: { status: 'PUBLISHED' },
+          OR: [{ publicNameFormat: null }, { publicNameFormat: { not: 'ADMIN' } }],
         },
       }),
     };
@@ -129,6 +137,17 @@ class ProfilesService {
         where: { userId: principal.userId },
         data: { firstName: dto.firstName, lastName: dto.lastName },
       });
+    });
+    return this.own(principal.userId);
+  }
+
+  async changePublicName(principal: Principal, dto: PublicNameDto) {
+    await this.prisma.$transaction(async tx => {
+      await lockUser(tx, principal.userId);
+      const actor = await this.sessions.assertLive(tx, principal.userId, principal.sessionId);
+      if (dto.publicNameFormat === 'ADMIN' && actor.role !== 'ADMIN')
+        throw new ForbiddenException();
+      await tx.profile.update({ where: { userId: principal.userId }, data: { publicNameFormat: dto.publicNameFormat } });
     });
     return this.own(principal.userId);
   }
@@ -276,6 +295,11 @@ class ProfilesController {
   @Patch('me/avatar')
   avatar(@CurrentUser() user: Principal, @Body() dto: AvatarDto) {
     return this.profiles.chooseAvatar(user, dto);
+  }
+
+  @Patch('me/public-name')
+  publicName(@CurrentUser() user: Principal, @Body() dto: PublicNameDto) {
+    return this.profiles.changePublicName(user, dto);
   }
 
   @Post('me/avatar')

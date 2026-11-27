@@ -12,7 +12,9 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import type { Article } from '../../types'
+import type { Article, PublicNameFormat } from '../../types'
+import { useCurrentUser } from '../../lib/auth'
+import { publicNameOptions } from '../../lib/publicName'
 import { db, useDb } from '../../lib/db'
 import { articleAction, saveArticle, useContentAction } from '../../lib/content'
 import { articleAuthorLabel, getMedia } from '../../lib/selectors'
@@ -23,9 +25,10 @@ import { AdminPageHead } from '../../components/layout/AdminLayout'
 import { TrailDetails } from '../../components/content/TrailDetails'
 import { BlockEditor } from '../../components/admin/BlockEditor'
 import { MediaPicker } from '../../components/admin/MediaPicker'
+import { QuickClassification } from '../../components/admin/QuickClassification'
 import { ArticleStatutBadge } from '../../components/content/ArticleCard'
 import { BlockView, estLienAutorise, youtubeId } from '../../components/content/BlockRenderer'
-import { Button, Field, Input, buttonClasses } from '../../components/ui/form'
+import { Button, Field, Input, Select, buttonClasses } from '../../components/ui/form'
 import { ConfirmDialog } from '../../components/ui/overlay'
 import { Alert } from '../../components/ui/feedback'
 import { useToast } from '../../hooks/useToast'
@@ -45,6 +48,7 @@ export function ArticleEditor() {
 }
 
 function ArticleForm({ existant }: { existant?: Article }) {
+  const user = useCurrentUser()
   const navigate = useNavigate()
   const { toast } = useToast()
   const effectuer = useContentAction()
@@ -58,6 +62,10 @@ function ArticleForm({ existant }: { existant?: Article }) {
   const [validation, setValidation] = useState<'draft' | 'publish' | 'schedule' | 'reprogram' | null>(null)
   const [categorieIds, setCategorieIds] = useState<string[]>(existant?.categorieIds ?? [])
   const [tagIds, setTagIds] = useState<string[]>(existant?.tagIds ?? [])
+  const [authorNameFormat, setAuthorNameFormat] = useState<PublicNameFormat>(
+    existant?.authorNameFormat ?? user?.publicNameFormat ?? 'INITIAL',
+  )
+  const authorOptions = existant?.authorNameOptions ?? publicNameOptions(user?.prenom ?? '', user?.nom ?? '')
   const [coverMediaId, setCoverMediaId] = useState<string | null>(existant?.coverMediaId ?? null)
   const [pickerCouverture, setPickerCouverture] = useState(false)
   const [dateProgrammation, setDateProgrammation] = useState(
@@ -138,7 +146,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
       setSaving(false)
     }
   })
-  const sauver = () => saveArticle({ titre, blocks, categorieIds, tagIds, coverMediaId }, existant?.id)
+  const sauver = () => saveArticle({ titre, blocks, categorieIds, tagIds, coverMediaId, authorNameFormat }, existant?.id)
   const enregistrer = () => soumettre('draft', async () => {
     const article = await sauver()
     if (nouveau) navigate(`/admin/articles/${article.id}`, { replace: true })
@@ -165,6 +173,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
     setBlocks(editableArticleBlocks(article))
     setCategorieIds(article.categorieIds)
     setTagIds(article.tagIds)
+    setAuthorNameFormat(article.authorNameFormat ?? 'FULL')
     setCoverMediaId(article.coverMediaId)
     setValidation(null)
     toast('Modifications annulées. La version publique reste inchangée.', 'info')
@@ -465,6 +474,7 @@ function ArticleForm({ existant }: { existant?: Article }) {
                   </label>
                 ))}
               </fieldset>
+              <QuickClassification kind="categories" onCreated={id => setCategorieIds(ids => [...ids, id])} />
             </section>
 
             <section className="carte p-6">
@@ -496,6 +506,18 @@ function ArticleForm({ existant }: { existant?: Article }) {
                   )
                 })}
               </fieldset>
+              <QuickClassification kind="tags" onCreated={id => setTagIds(ids => [...ids, id])} />
+            </section>
+
+            <section className="carte p-6">
+              <Field label="Nom affiché comme auteur" htmlFor="art-auteur">
+                <Select id="art-auteur" value={authorNameFormat} onChange={event => setAuthorNameFormat(event.target.value as PublicNameFormat)}>
+                  <option value="FULL">{authorOptions.FULL}</option>
+                  <option value="INITIAL">{authorOptions.INITIAL}</option>
+                  {user?.role === 'administrateur' && <option value="ADMIN">Admin</option>}
+                </Select>
+              </Field>
+              <p className="mt-2 text-sm text-mist">Aperçu public · {authorOptions[authorNameFormat]}</p>
             </section>
 
             <section className="carte p-6">

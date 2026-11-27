@@ -1,7 +1,7 @@
 import type { Article, Block, LocationBlockFields, TrailBlockFields, TrailMapSettings, TrailVisibility } from '../types'
 
 export const emptyTrail: TrailBlockFields = {
-  name: '', description: '', difficulty: null, distance: null, durationSeconds: null,
+  name: '', description: '', difficulty: null, distance: null, durationSeconds: null, estimatedDurationSeconds: null,
   departureAt: null, arrivalAt: null, elevationGain: null, elevationLoss: null, elevationMin: null, elevationMax: null,
 }
 

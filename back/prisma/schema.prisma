@@ -178,6 +178,14 @@ model User {
   @@map("users")
 }
 
+enum PublicNameFormat {
+  FULL
+  INITIAL
+  ADMIN
+
+  @@map("public_name_format")
+}
+
 model Profile {
   id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId        String     @unique @map("user_id") @db.Uuid
@@ -187,6 +195,7 @@ model Profile {
   avatarMediaId String?    @map("avatar_media_id") @db.Uuid
   avatarPreset  String?    @map("avatar_preset")
   googleAvatar  String?    @map("google_avatar")
+  publicNameFormat PublicNameFormat @default(INITIAL) @map("public_name_format")
   createdAt     DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -274,6 +283,7 @@ model ArticleVersion {
   articleId    String             @map("article_id") @db.Uuid
   kind         ArticleVersionKind
   title        String             @db.VarChar(255)
+  authorNameFormat PublicNameFormat? @map("author_name_format")
   coverMediaId String?            @map("cover_media_id") @db.Uuid
   createdAt    DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -314,6 +324,7 @@ model Category {
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   articles ArticleCategory[]
+  media    Media[] @relation("MediaCategories")
 
   @@map("categories")
 }
@@ -326,6 +337,7 @@ model Tag {
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   articles ArticleTag[]
+  media    Media[] @relation("MediaTags")
 
   @@map("tags")
 }
@@ -360,6 +372,7 @@ model Comment {
   articleId String        @map("article_id") @db.Uuid
   parentId  String?       @map("parent_id") @db.Uuid
   content   String?
+  publicNameFormat PublicNameFormat? @map("public_name_format")
   status    CommentStatus @default(PUBLISHED)
   createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -471,6 +484,9 @@ model Media {
   updatedAt DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   folderId  String?     @map("folder_id") @db.Uuid
   folder    MediaFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  gpxElevations Json? @map("gpx_elevations")
+  categories Category[] @relation("MediaCategories")
+  tags Tag[] @relation("MediaTags")
 
   profiles          Profile[]
   articleCovers     ArticleVersion[]

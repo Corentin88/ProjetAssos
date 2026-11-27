@@ -11,6 +11,7 @@ export type UserStatus = 'actif' | 'suspendu'
 
 /** Méthodes d'authentification (§5 : mot de passe, compte Google, ou les deux) */
 export type AuthMethod = 'motdepasse' | 'google'
+export type PublicNameFormat = 'FULL' | 'INITIAL' | 'ADMIN'
 
 export type ApiAvatar =
   | { kind: 'DEFAULT' }
@@ -37,6 +38,7 @@ export interface User {
   hasPersonalAvatar?: boolean
   googleAvatar?: string
   authMethods: AuthMethod[]
+  publicNameFormat?: PublicNameFormat
   createdAt: string
   lastActivityAt: string
   /** Nouvelle adresse en attente de validation (§8) */
@@ -48,6 +50,7 @@ export interface Category {
   nom: string
   slug: string
   articleCount?: number
+  mediaCount?: number
 }
 
 export interface Tag {
@@ -55,6 +58,7 @@ export interface Tag {
   nom: string
   slug: string
   articleCount?: number
+  mediaCount?: number
 }
 
 /** Blocs de l'éditeur d'article (§18) */
@@ -86,6 +90,7 @@ export interface Block {
   mapSettings?: TrailMapSettings
   mapPreview?: Trail['mapPreview'] | null
   gpxAvailable?: boolean
+  elevationSource?: ElevationSource
   location?: LocationBlockFields
 }
 
@@ -99,6 +104,8 @@ export interface Article {
   auteurId: string
   auteurLabel?: string
   auteurNom?: string
+  authorNameFormat?: PublicNameFormat
+  authorNameOptions?: Record<PublicNameFormat, string>
   createdAt: string
   /** Date de publication effective (§17) */
   publishedAt: string | null
@@ -141,6 +148,7 @@ export interface TrailMeasurements {
   name: string
   distance: number | null
   durationSeconds: number | null
+  estimatedDurationSeconds?: number | null
   departureAt: string | null
   arrivalAt: string | null
   elevationGain: number | null
@@ -157,7 +165,7 @@ export interface TrailBlockFields extends TrailMeasurements {
 export type TrailVisibility = Record<
   'distance' | 'duration' | 'dates' | 'elevation' | 'altitude' | 'difficulty' | 'description' | 'map' | 'download',
   boolean
-> & Partial<Record<'departure' | 'arrival' | 'elevationGain' | 'elevationLoss' | 'elevationMin' | 'elevationMax', boolean>>
+> & Partial<Record<'departure' | 'arrival' | 'elevationGain' | 'elevationLoss' | 'elevationMin' | 'elevationMax' | 'estimatedDuration', boolean>>
 
 export type TrailMapSettings = {
   slopes: boolean
@@ -179,7 +187,13 @@ export type TrailMapPreview = {
   samples?: TrailSample[][]
 }
 
-export type GpxPreview = TrailMapPreview & { details: TrailMeasurements }
+export type ElevationSource = 'gpx' | 'ign' | 'mixed' | null
+export type GpxPreview = TrailMapPreview & {
+  details: TrailMeasurements
+  elevationSource: ElevationSource
+  enrichment: 'complete' | 'pending' | 'partial' | 'failed'
+  enrichedAvailable: boolean
+}
 
 export interface LocationBlockFields {
   title: string
@@ -214,6 +228,7 @@ export interface Comment {
   /** « Utilisateur supprimé » ou nom conservé après suspension (§10, §12) */
   auteurLabel: string
   auteurAvatar?: ApiAvatar
+  isOwn?: boolean
   contenu: string
   createdAt: string
   updatedAt: string | null
@@ -252,6 +267,8 @@ interface LibraryItemFields {
 export type LibraryImage = Media & LibraryItemFields & { type: 'IMAGE'; thumbnail: string }
 export type LibraryItem = LibraryImage | (LibraryItemFields & { type: 'GPX' })
 export type LibraryDetails = LibraryItem & {
+  categorieIds: string[]
+  tagIds: string[]
   usage: { articles: string[]; avatars: number; association: boolean; trails: number }
 }
 

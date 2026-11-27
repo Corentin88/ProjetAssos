@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { Clock3, Download, Mountain, Route } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import type { Trail, TrailBlockFields, TrailMapSettings, TrailVisibility } from '../../types'
+import type { ElevationSource, Trail, TrailBlockFields, TrailMapSettings, TrailVisibility } from '../../types'
 import { authErrorMessage, protectedRequest, useCurrentUser } from '../../lib/auth'
 import { formatDateTime, formatNombre } from '../../lib/format'
 import { defaultTrailMapSettings, defaultTrailVisibility } from '../../lib/mapBlocks'
@@ -51,13 +51,14 @@ function TrailMeasures({ label, measures, primary = false }: {
 }
 
 export function TrailDetails({ trail, mapPreview, visibility = defaultTrailVisibility,
-  mapSettings = defaultTrailMapSettings, mediaId, gpxAvailable, articleId, blockId }: {
+  mapSettings = defaultTrailMapSettings, mediaId, gpxAvailable, elevationSource, articleId, blockId }: {
   trail: Trail | TrailBlockFields
   mapPreview?: Trail['mapPreview'] | null
   visibility?: TrailVisibility
   mapSettings?: TrailMapSettings
   mediaId?: string
   gpxAvailable?: boolean
+  elevationSource?: ElevationSource
   articleId?: string
   blockId?: string
 }) {
@@ -83,7 +84,7 @@ export function TrailDetails({ trail, mapPreview, visibility = defaultTrailVisib
   }
 
   const route = 'durationSeconds' in trail
-    ? trail : { ...trail, durationSeconds: trail.duration * 60, departureAt: null, arrivalAt: null, elevationMin: null, elevationMax: null }
+    ? trail : { ...trail, durationSeconds: trail.duration * 60, estimatedDurationSeconds: null, departureAt: null, arrivalAt: null, elevationMin: null, elevationMax: null }
   const preview = mapPreview ?? ('mapPreview' in trail ? trail.mapPreview : null)
   const gpxId = mediaId ?? ('gpxMediaId' in trail ? trail.gpxMediaId : undefined)
   const hasTrace = Boolean(preview?.segments.some(segment => segment.length >= 2))
@@ -98,6 +99,8 @@ export function TrailDetails({ trail, mapPreview, visibility = defaultTrailVisib
   const primary = [
     { label: 'Distance', value: mesure(visibility.distance, route.distance, 'km'), icon: Route },
     { label: 'Durée écoulée', value: visibility.duration && route.durationSeconds != null ? elapsedTime(route.durationSeconds) : null, icon: Clock3 },
+    { label: 'Durée de marche estimée', value: visibility.estimatedDuration && route.estimatedDurationSeconds != null
+      ? elapsedTime(route.estimatedDurationSeconds) : null, icon: Clock3 },
   ]
   const times = [
     { label: 'Départ', value: date(visibility.dates && visibility.departure !== false, route.departureAt) },
@@ -107,9 +110,10 @@ export function TrailDetails({ trail, mapPreview, visibility = defaultTrailVisib
     { label: 'Dénivelé positif (D+)', value: mesure(visibility.elevation && visibility.elevationGain !== false, route.elevationGain, 'm', '+') },
     { label: 'Dénivelé négatif (D−)', value: mesure(visibility.elevation && visibility.elevationLoss !== false, route.elevationLoss, 'm', '−') },
   ]
+  const arrondiAltitude = (value: number | null) => value == null ? null : Math.round(value)
   const altitude = [
-    { label: 'Altitude minimale', value: mesure(visibility.altitude && visibility.elevationMin !== false, route.elevationMin, 'm') },
-    { label: 'Altitude maximale', value: mesure(visibility.altitude && visibility.elevationMax !== false, route.elevationMax, 'm') },
+    { label: 'Altitude minimale', value: mesure(visibility.altitude && visibility.elevationMin !== false, arrondiAltitude(route.elevationMin), 'm') },
+    { label: 'Altitude maximale', value: mesure(visibility.altitude && visibility.elevationMax !== false, arrondiAltitude(route.elevationMax), 'm') },
   ]
 
   return (
@@ -132,16 +136,20 @@ export function TrailDetails({ trail, mapPreview, visibility = defaultTrailVisib
       <TrailMeasures label="Horaires" measures={times} />
       <TrailMeasures label="Dénivelés" measures={elevation} />
       <TrailMeasures label="Altitudes" measures={altitude} />
+      {(elevationSource === 'ign' || elevationSource === 'mixed') &&
+        <p className="text-sm text-mist">{elevationSource === 'mixed' ? 'Altitudes GPX complétées par l’IGN RGE ALTI.' : 'Altitudes estimées à partir du modèle IGN RGE ALTI.'}</p>}
       {visibility.map && (hasTrace || gpxAvailable || gpxId) && <TrailMap preview={preview} path={mapPath} secure={!articleId}
         settings={mapSettings} showDistance={visibility.distance} showTimes={visibility.dates}
         showAltitude={visibility.altitude || mapSettings.profile} />}
       {visibility.map && !articleId && !hasTrace && !gpxId && <p>Associez un fichier GPX dans l’éditeur pour afficher le tracé.</p>}
       {visibility.download && canDownload && blockId && !articleId && (
-        <Button className="mt-4" disabled><Download aria-hidden="true" className="h-5 w-5" /> Télécharger le GPX</Button>
+        <Button className="mt-4" disabled><Download aria-hidden="true" className="h-5 w-5" /> Télécharger le parcours GPX</Button>
       )}
       {visibility.download && canDownload && articleId && <div className="mt-4">
         {user?.statut === 'actif' ? (
-          <Button onClick={download} disabled={downloading}><Download aria-hidden="true" className="h-5 w-5" /> Télécharger le GPX</Button>
+          <Button onClick={() => void download()} disabled={downloading}>
+            <Download aria-hidden="true" className="h-5 w-5" /> Télécharger le parcours GPX
+          </Button>
         ) : !user ? (
           <Link to="/connexion" state={{ from: location.pathname + location.search + location.hash }}
             className={buttonClasses('secondaire')}>Se connecter pour télécharger le GPX</Link>

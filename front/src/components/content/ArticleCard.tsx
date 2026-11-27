@@ -7,6 +7,7 @@ import { mediaUrl } from '../../lib/assets'
 import { normaliserParametresArticles } from '../../lib/articleSearchParams'
 import { Badge } from '../ui/feedback'
 import type { BadgeVariant } from '../ui/feedback'
+import { articleCategoryLink } from './ArticleCategories'
 
 /** Nombre de tags affichés directement sur la carte ; au-delà, un « +N »
  *  évite de masquer la photographie (brief §2 : traitement élégant) */
@@ -56,10 +57,10 @@ export function ArticleCard({ article }: { article: Article }) {
   const origine = depuisListe || location.pathname === '/' ? `${location.pathname}${location.search}` : undefined
   const navigationArticle = origine ? { from: origine } : undefined
 
-  const lienFiltre = (critere: 'cat' | 'tag', id: string) => {
-    // Depuis les résultats, le badge remplace seulement son critère et repart à la première page.
-    const params = normaliserParametresArticles(new URLSearchParams(depuisListe ? location.search : ''))
-    params.set(critere, id)
+  const filtres = new URLSearchParams(depuisListe ? location.search : '')
+  const lienTag = (id: string) => {
+    const params = normaliserParametresArticles(filtres)
+    params.set('tag', id)
     params.delete('page')
     params.set('avancee', '1')
     return `/actualites?${params}`
@@ -86,7 +87,7 @@ export function ArticleCard({ article }: { article: Article }) {
           {/* Badge de catégorie, haut à gauche, toujours lisible */}
           {categorie ? (
             <Link
-              to={lienFiltre('cat', categorie.id)}
+              to={articleCategoryLink(categorie.id, filtres)}
               className="carte-article-badge absolute left-3 top-3 z-10 inline-flex min-h-8 max-w-[calc(100%-1.5rem)] items-center rounded-full bg-white px-3 text-sm font-bold text-forest shadow-sm hover:bg-leaf-pale hover:underline"
               title={categorie.nom}
             >
@@ -104,7 +105,7 @@ export function ArticleCard({ article }: { article: Article }) {
               {tagsVisibles.map((t) => (
                 <li key={t.id} className="min-w-0">
                   <Link
-                    to={lienFiltre('tag', t.id)}
+                    to={lienTag(t.id)}
                     className="carte-article-badge pointer-events-auto flex min-h-8 items-center rounded-full bg-bark px-2.5 text-xs font-bold text-white hover:bg-forest-dark hover:underline"
                     title={`#${t.nom}`}
                   >

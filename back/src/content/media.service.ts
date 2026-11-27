@@ -17,6 +17,7 @@ import type { Principal } from '../auth/session.service.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import type {
   MediaDto,
+  MediaClassificationDto,
   MediaFolderDto,
   MediaLibraryQuery,
   MoveMediaDto,
@@ -50,6 +51,7 @@ const adminUsed = {
   ],
 } satisfies Prisma.MediaWhereInput;
 const libraryTypes = [library, gpxLibrary];
+type LibraryMedia = Omit<Media, 'gpxElevations'>;
 const pageSize = 24;
 const sortOrder = {
   name: { name: 'asc' },
@@ -73,6 +75,7 @@ export class MediaService {
 
   async list(admin: boolean, db: Prisma.TransactionClient) {
     const items = await db.media.findMany({
+      omit: { gpxElevations: true },
       // L’instantané de contenu ne transporte que les références utiles au rendu.
       where: { ...library, ...(admin ? adminUsed : publiclyUsed) },
     });
@@ -93,7 +96,12 @@ export class MediaService {
                 ? [gpxLibrary]
                 : libraryTypes,
         },
-        ...(search ? [{ OR: [{ name: matches }, { altText: matches }] }] : []),
+        ...(search ? [{ OR: [
+          { name: matches }, { altText: matches },
+          { categories: { some: { name: matches } } }, { tags: { some: { name: matches } } },
+        ] }] : []),
+        ...(query.category ? [{ categories: { some: { id: query.category } } }] : []),
+        ...(query.tag ? [{ tags: { some: { id: query.tag } } }] : []),
         ...(query.folder
           ? [{ folderId: query.folder === 'unfiled' ? null : query.folder }]
           : []),
@@ -103,6 +111,7 @@ export class MediaService {
       async (tx) => {
         const total = await tx.media.count({ where });
         const items = await tx.media.findMany({
+          omit: { gpxElevations: true },
           where,
           orderBy: [sortOrder[query.sort ?? 'date'], { id: 'asc' }],
           skip: (page - 1) * pageSize,
@@ -121,7 +130,10 @@ export class MediaService {
   async details(id: string) {
     const item = await this.prisma.media.findFirst({
       where: { id, OR: libraryTypes },
+      omit: { gpxElevations: true },
       include: {
+        categories: { select: { id: true } },
+        tags: { select: { id: true } },
         _count: {
           select: { profiles: true, associationBlocks: true, trails: true },
         },
@@ -148,6 +160,8 @@ export class MediaService {
         : 0;
     return {
       ...this.presentLibraryItem(item),
+      categorieIds: item.categories.map(category => category.id),
+      tagIds: item.tags.map(tag => tag.id),
       largeur: metadata?.width ?? 0,
       hauteur: metadata?.height ?? 0,
       usage: {
@@ -161,6 +175,23 @@ export class MediaService {
         trails,
       },
     };
+  }
+
+  classify(actor: Principal, id: string, dto: MediaClassificationDto) {
+    return this.prisma.$transaction(async tx => {
+      await lockAdmin(tx, this.sessions, actor);
+      await this.lock(tx, id, true);
+      const categories = dto.categorieIds.map(id => ({ id }));
+      const tags = dto.tagIds.map(id => ({ id }));
+      if (await tx.category.count({ where: { id: { in: dto.categorieIds } } }) !== categories.length ||
+          await tx.tag.count({ where: { id: { in: dto.tagIds } } }) !== tags.length)
+        throw new BadRequestException();
+      await tx.media.update({
+        where: { id },
+        data: { categories: { set: categories }, tags: { set: tags } },
+      });
+      await contentLog(tx, actor.userId, 'MEDIA', id, 'UPDATE', 'Catégories et tags du média mis à jour.');
+    });
   }
 
   folders() {
@@ -435,7 +466,7 @@ export class MediaService {
     }
   }
 
-  private presentLibraryItem(item: Media) {
+  private presentLibraryItem(item: LibraryMedia) {
     const common = {
       type: item.type,
       folderId: item.folderId,
@@ -453,7 +484,7 @@ export class MediaService {
     };
   }
 
-  private present(item: Media, admin: boolean) {
+  private present(item: LibraryMedia, admin: boolean) {
     return {
       id: item.id,
       nom: item.name,

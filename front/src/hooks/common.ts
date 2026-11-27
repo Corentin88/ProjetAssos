@@ -14,11 +14,11 @@ export function useFakeLoad(delay = 500): boolean {
 /** Mémoire de position de défilement par clé de location + paramètres d'URL
  *  (restauration après retour depuis un article — §25).
  *  La clé inclut la recherche : revenir sur la même liste (mêmes critères)
- *  restaure la position de défilement ; une navigation vers une liste avec
- *  d'autres critères (badge de catégorie, pagination…) repart du haut de page. */
+ *  restaure la position de défilement. Les liens de catégorie et la pagination
+ *  repositionnent la liste, tandis que l’édition des critères reste sur place. */
 const scrollMemory = new Map<string, number>()
 
-export function useScrollMemory(key: string): void {
+export function useScrollMemory(key: string, resultsHash?: string, categoryEntry = false): void {
   const location = useLocation()
   const navigation = useNavigationType()
   const cle = `${key}${location.pathname}${location.search}`
@@ -26,8 +26,19 @@ export function useScrollMemory(key: string): void {
   useLayoutEffect(() => {
     // La saisie et la normalisation remplacent l'URL sur place, sans déplacer le champ actif.
     const remplacementSurPlace = navigation === 'REPLACE' && dejaMontee.current
-    if (!remplacementSurPlace) {
-      window.scrollTo({ top: scrollMemory.get(cle) ?? 0, behavior: 'instant' })
+    const ancreResultats = resultsHash && location.hash === resultsHash
+    if (!remplacementSurPlace || ancreResultats) {
+      const position = scrollMemory.get(cle)
+      const viaLien = ancreResultats && (navigation !== 'POP' || position === undefined)
+      const accesDirect = !dejaMontee.current && categoryEntry && position === undefined
+      const target = resultsHash && (viaLien || accesDirect) ? document.getElementById(resultsHash.slice(1)) : null
+      if (target) {
+        target.focus({ preventScroll: true })
+        target.scrollIntoView({ behavior: 'instant', block: 'start' })
+      } else if (!resultsHash || !dejaMontee.current || navigation === 'POP'
+        || new URLSearchParams(location.search).has('page')) {
+        window.scrollTo({ top: position ?? 0, behavior: 'instant' })
+      }
     }
     dejaMontee.current = true
     const onScroll = () => {
@@ -36,7 +47,7 @@ export function useScrollMemory(key: string): void {
     onScroll()
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
-  }, [cle, navigation])
+  }, [cle, navigation, location.key, location.hash, location.search, resultsHash, categoryEntry])
 }
 
 export function clearScrollMemory(key?: string): void {

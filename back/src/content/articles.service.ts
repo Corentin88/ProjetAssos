@@ -7,7 +7,8 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client.js';
-import type { ArticleStatus } from '../../generated/prisma/client.js';
+import type { ArticleStatus, PublicNameFormat } from '../../generated/prisma/client.js';
+import { formatPublicName } from '../profiles/public-name.js';
 import { SessionService } from '../auth/session.service.js';
 import type { Principal } from '../auth/session.service.js';
 import { PrismaService } from '../prisma/prisma.module.js';
@@ -80,15 +81,23 @@ function present(article: StoredArticle, admin: boolean) {
   );
   const version = (admin ? (working ?? published) : published)!;
   const profile = article.user?.profile;
+  const authorNameFormat = version.authorNameFormat ?? 'FULL';
+  const auteurLabel = formatPublicName(profile, authorNameFormat);
   return {
     id: article.id,
     slug: article.slug,
     statut: states[article.status],
-    auteurId: article.userId ?? '',
-    auteurLabel: profile
-      ? `${profile.firstName} ${profile.lastName}`
-      : 'Utilisateur supprimé',
-    auteurNom: profile?.lastName ?? '',
+    auteurId: admin || authorNameFormat !== 'ADMIN' ? article.userId ?? '' : '',
+    auteurLabel,
+    auteurNom: authorNameFormat === 'FULL' ? profile?.lastName ?? '' : auteurLabel,
+    ...(admin ? {
+      authorNameFormat,
+      authorNameOptions: {
+        FULL: formatPublicName(profile, 'FULL'),
+        INITIAL: formatPublicName(profile, 'INITIAL'),
+        ADMIN: 'Admin',
+      },
+    } : {}),
     createdAt: article.createdAt,
     updatedAt: version.updatedAt,
     publishedAt: article.publishedAt,
@@ -230,7 +239,8 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
     return this.prisma.$transaction(async (tx) => {
       await lockAdmin(tx, this.sessions, actor);
       await this.verifyMedia(tx, dto);
-      const versionData = await this.versionData(tx, dto);
+      const profile = await tx.profile.findUniqueOrThrow({ where: { userId: actor.userId }, select: { publicNameFormat: true } });
+      const versionData = await this.versionData(tx, dto, dto.authorNameFormat ?? profile.publicNameFormat);
       const article = await tx.article.create({
         data: {
           slug: contentSlug(dto.titre),
@@ -258,10 +268,11 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
     return this.change(actor, id, async (tx, article) => {
       if (article.status === 'TRASHED') throw new ConflictException();
       await this.verifyMedia(tx, dto);
-      const versionData = await this.versionData(tx, dto);
       const working = article.versions.find(
         (version) => version.kind === 'WORKING',
       );
+      const previous = working ?? article.versions.find(version => version.kind === 'PUBLISHED');
+      const versionData = await this.versionData(tx, dto, dto.authorNameFormat ?? previous?.authorNameFormat ?? 'FULL');
       if (working) {
         await tx.articleBlock.deleteMany({ where: { versionId: working.id } });
         await tx.articleCategory.deleteMany({
@@ -489,7 +500,7 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
     return article;
   }
 
-  private async versionData(tx: Prisma.TransactionClient, dto: ArticleDto) {
+  private async versionData(tx: Prisma.TransactionClient, dto: ArticleDto, authorNameFormat: PublicNameFormat) {
     const previews = new Map<string, Awaited<ReturnType<TrailsService['blockPreview']>>>();
     const ids = new Set(dto.blocks.flatMap(block => block.type === 'randonnee' && block.mediaId ? [block.mediaId] : []));
     for (const id of [...ids].sort()) previews.set(id, await this.trails.blockPreview(tx, id));
@@ -500,6 +511,7 @@ export class ArticlesService implements OnModuleInit, OnModuleDestroy {
     });
     return {
       title: dto.titre.trim(),
+      authorNameFormat,
       coverMediaId: dto.coverMediaId,
       blocks: { create: blocks },
       categories: {

@@ -3,11 +3,13 @@ import { useEffect, useLayoutEffect, useRef } from 'react'
 import { SiteHeader } from './SiteHeader'
 import { SiteFooter } from './SiteFooter'
 import { SkipLink } from '../ui/nav'
+import { articleResultsHash } from '../content/ArticleCategories'
 
 /** Layout public : lien d'évitement, en-tête, contenu principal, pied de page */
 export function PublicLayout() {
-  const { pathname } = useLocation()
+  const { pathname, hash, search } = useLocation()
   const contenu = useRef<HTMLElement>(null)
+  const focusPath = useRef<string>()
 
   useLayoutEffect(() => {
     // L'accueil et la liste des actualités restaurent leur propre position au retour.
@@ -18,8 +20,12 @@ export function PublicLayout() {
 
   // Au changement de page, replacer le focus et la lecture en haut du contenu
   useEffect(() => {
-    contenu.current?.focus({ preventScroll: true })
-  }, [pathname])
+    if (focusPath.current === pathname) return
+    focusPath.current = pathname
+    const params = new URLSearchParams(search)
+    const categoryEntry = pathname === '/actualites' && Boolean(params.get('cat') ?? params.get('categorie')) && !params.has('avancee')
+    if (hash !== articleResultsHash && !categoryEntry) contenu.current?.focus({ preventScroll: true })
+  }, [pathname, hash, search])
 
   return (
     <div className="flex min-h-screen flex-col bg-sand">

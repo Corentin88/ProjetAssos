@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useState } from 'react'
 import { ChevronLeft, ChevronRight, Folder, Route } from 'lucide-react'
 import type { LibraryItem, MediaFolder } from '../../types'
 import { useResource } from '../../lib/community'
+import { useDb } from '../../lib/db'
 import { ContentImage } from '../content/ContentImage'
 import { Alert, EmptyState } from '../ui/feedback'
 import { Button, Field, Input, Select } from '../ui/form'
@@ -10,13 +11,13 @@ type MediaPage = { total: number; pageSize: number; items: LibraryItem[] }
 type LibraryType = LibraryItem['type']
 
 const root = 'unfiled'
-const initialFilters = { folder: '', type: '', sort: 'date', page: 1 }
+const initialFilters = { folder: '', type: '', sort: 'date', page: 1, category: '', tag: '' }
 
 export function useMediaLibrary(type?: LibraryType) {
   const [filters, setFilters] = useState(initialFilters)
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
-  const { folder, page, sort, type: typeFilter } = filters
+  const { folder, page, sort, category, tag, type: typeFilter } = filters
   const effectiveType = type ?? typeFilter
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -29,6 +30,8 @@ export function useMediaLibrary(type?: LibraryType) {
   if (query) params.set('q', query)
   if (folder) params.set('folder', folder)
   if (effectiveType) params.set('type', effectiveType)
+  if (category) params.set('category', category)
+  if (tag) params.set('tag', tag)
   const results = useResource<MediaPage>(`/admin/content/media?${params}`, true)
   const folders = useResource<MediaFolder[]>('/admin/content/media-folders', true)
   const byId = useMemo(() => new Map(folders.data?.map(item => [item.id, item])), [folders.data])
@@ -42,7 +45,9 @@ export function useMediaLibrary(type?: LibraryType) {
   }, [page, pages, results.data])
   return {
     results, folders, byId, current, folder, setFolder, search, setSearch,
-    effectiveType, fixedType: type, sort, page, pages,
+    effectiveType, fixedType: type, sort, page, pages, category, tag,
+    setCategory: (category: string) => setFilters(filters => ({ ...filters, category, page: 1 })),
+    setTag: (tag: string) => setFilters(filters => ({ ...filters, tag, page: 1 })),
     setType: (value: string) => setFilters(filters => ({ ...filters, type: value, page: 1 })),
     setSort: (value: string) => setFilters(filters => ({ ...filters, sort: value, page: 1 })),
     setPage: (value: number) => setFilters(filters => ({ ...filters, page: value })),
@@ -78,6 +83,7 @@ export function MediaLibrary({ library, activeId, selected, onOpen, onToggle }: 
   onToggle?: (id: string) => void
 }) {
   const id = useId()
+  const { categories, tags } = useDb()
   const { current, folder, folders, results, setFolder } = library
   const children = folders.data?.filter(item => item.parentId === (current?.id ?? null))
   const path = current ? folderPath(library.byId, current.id) : []
@@ -85,7 +91,7 @@ export function MediaLibrary({ library, activeId, selected, onOpen, onToggle }: 
     <div className="flex min-w-0 flex-col gap-4">
       <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))_auto]">
         <Field label="Rechercher" htmlFor={`${id}-search`}>
-          <Input id={`${id}-search`} type="search" maxLength={255} placeholder="Nom ou texte alternatif"
+          <Input id={`${id}-search`} type="search" maxLength={255} placeholder="Nom, texte alternatif ou classement"
             value={library.search} onChange={event => library.setSearch(event.target.value)} />
         </Field>
         {!library.fixedType && <Field label="Type de média" htmlFor={`${id}-type`}>
@@ -106,6 +112,20 @@ export function MediaLibrary({ library, activeId, selected, onOpen, onToggle }: 
         </Field>
         <Button variant="secondaire" onClick={library.reset}>Réinitialiser</Button>
       </div>
+      {(categories.length > 0 || tags.length > 0) && <div className="grid gap-3 sm:grid-cols-2">
+        {categories.length > 0 && <Field label="Catégorie" htmlFor={`${id}-category`}>
+          <Select id={`${id}-category`} value={library.category} onChange={event => library.setCategory(event.target.value)}>
+            <option value="">Toutes les catégories</option>
+            {categories.map(item => <option key={item.id} value={item.id}>{item.nom}</option>)}
+          </Select>
+        </Field>}
+        {tags.length > 0 && <Field label="Tag" htmlFor={`${id}-tag`}>
+          <Select id={`${id}-tag`} value={library.tag} onChange={event => library.setTag(event.target.value)}>
+            <option value="">Tous les tags</option>
+            {tags.map(item => <option key={item.id} value={item.id}>{item.nom}</option>)}
+          </Select>
+        </Field>}
+      </div>}
 
       {folders.error && <Alert kind="erreur" title="Dossiers indisponibles">
         <p>{folders.error}</p><Button variant="secondaire" onClick={() => void folders.refresh()}>Réessayer</Button>

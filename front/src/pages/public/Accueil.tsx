@@ -7,6 +7,7 @@ import { articlesDuCarrousel } from '../../lib/carousel'
 import { getMedia, publishedArticles } from '../../lib/selectors'
 import { ArticleCarousel } from '../../components/content/ArticleCarousel'
 import { ArticleCard } from '../../components/content/ArticleCard'
+import { ArticleCategories } from '../../components/content/ArticleCategories'
 import { Button, Input, buttonClasses } from '../../components/ui/form'
 import { EmptyState } from '../../components/ui/feedback'
 import { mediaUrl } from '../../lib/assets'
@@ -104,6 +105,7 @@ export function Accueil() {
             Recherche avancée
           </Link>
         </form>
+        <ArticleCategories />
       </div>
 
       {/* Zone d'articles mis en avant (§26) — carrousel contrôlable et pausable */}

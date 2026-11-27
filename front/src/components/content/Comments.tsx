@@ -141,7 +141,7 @@ function CommentView({
   }
 
   const nomPublic = comment.auteurLabel || 'Utilisateur supprimé'
-  const estAuteur = user && comment.auteurId === user.id
+  const estAuteur = user && (comment.isOwn || comment.auteurId === user.id)
   const avatar = comment.auteurAvatar && (user || comment.auteurAvatar.kind === 'PRESET')
     ? mapAvatar(comment.auteurAvatar) : undefined
   const noms = nomPublic.split(/\s+/)

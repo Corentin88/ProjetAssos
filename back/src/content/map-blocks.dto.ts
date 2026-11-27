@@ -3,6 +3,7 @@ import { IsBoolean, IsIn, IsInt, IsISO8601, IsNumber, IsOptional, IsString, Matc
 export class TrailVisibilityDto {
   @IsBoolean() distance: boolean;
   @IsBoolean() duration: boolean;
+  @ValidateIf((_, value) => value !== undefined) @IsBoolean() estimatedDuration?: boolean;
   @IsBoolean() dates: boolean;
   @IsBoolean() elevation: boolean;
   @IsBoolean() altitude: boolean;
@@ -29,6 +30,7 @@ export class TrailBlockFieldsDto {
   @IsString() @MaxLength(4000) description: string;
   @IsOptional() @IsNumber() @Min(0) distance?: number | null;
   @IsOptional() @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER) durationSeconds?: number | null;
+  @IsOptional() @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER) estimatedDurationSeconds?: number | null;
   @IsOptional() @IsNumber() @Min(0) elevationGain?: number | null;
   @IsOptional() @IsNumber() @Min(0) elevationLoss?: number | null;
   @IsOptional() @IsNumber() elevationMin?: number | null;

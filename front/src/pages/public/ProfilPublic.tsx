@@ -54,7 +54,7 @@ function ProfilPublicContenu({ tousLesCommentaires }: { tousLesCommentaires?: bo
 
   const prenom = cible.prenom
   const initialeNom = cible.nom.charAt(0)
-  const nomPublic = initialeNom ? `${prenom} ${initialeNom}.` : prenom
+  const nomPublic = cible.publicName ?? (initialeNom ? `${prenom} ${initialeNom}.` : prenom)
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 [overflow-wrap:anywhere] sm:py-8">

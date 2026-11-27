@@ -124,14 +124,13 @@ export interface ArticleQuery {
 }
 
 function articleText(a: Article): string {
-  const author = getUser(a.auteurId)
   return [
     a.titre,
     publicBlocks(a).flatMap((b) => [
       b.text, ...(b.items ?? []), b.trail?.name, b.trail?.description,
       b.location?.title, b.location?.address, b.location?.description,
     ]).join(' '),
-    author ? `${author.prenom} ${author.nom}` : a.auteurLabel ?? '',
+    articleAuthorLabel(a),
     a.categorieIds.map((id) => getCategory(id)?.nom ?? '').join(' '),
     a.tagIds.map((id) => getTag(id)?.nom ?? '').join(' '),
   ]

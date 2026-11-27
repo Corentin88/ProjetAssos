@@ -12,6 +12,7 @@ import { MediaPicker } from './MediaPicker'
 const numberFields = [
   ['distance', 'Distance (km)', 0, 'any'],
   ['durationSeconds', 'Durée écoulée (secondes)', 0, 1],
+  ['estimatedDurationSeconds', 'Durée de marche estimée (secondes)', 0, 1],
   ['elevationGain', 'Dénivelé positif (m)', 0, 'any'],
   ['elevationLoss', 'Dénivelé négatif (m)', 0, 'any'],
   ['elevationMin', 'Altitude minimale (m)', undefined, 'any'],
@@ -31,7 +32,7 @@ const measurementKeys = [...numberFields.map(([key]) => key), ...dateFields.map(
 
 function prefillTrail(trail: TrailBlockFields, next: TrailMeasurements, previous?: TrailMeasurements): TrailBlockFields {
   const measurements = Object.fromEntries(measurementKeys.map(key => [
-    key, trail[key] == null || trail[key] === previous?.[key] ? next[key] : trail[key],
+    key, trail[key] == null || trail[key] === previous?.[key] ? next[key] ?? null : trail[key],
   ]))
   return {
     ...trail,
@@ -59,6 +60,7 @@ export function TrailEditor({ block, onChange, onBusy, errors }: {
   const [error, setError] = useState('')
   const [imported, setImported] = useState<{ id: string; name: string }>()
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [analysis, setAnalysis] = useState<{ id: string; preview: GpxPreview }>()
   const fileInput = useRef<HTMLInputElement>(null)
   const pendingUpload = useRef<{ file: File; id: string }>()
   const lastExtraction = useRef<{ id: string; details: TrailMeasurements }>()
@@ -70,13 +72,10 @@ export function TrailEditor({ block, onChange, onBusy, errors }: {
     onBusy?.(block.id, true)
     try {
       const previous = lastExtraction.current
-      const [result, priorDetails] = await Promise.all([
-        load(),
-        block.mediaId && previous?.id !== block.mediaId
-          ? getGpxPreview(block.mediaId).then(value => value.details).catch(() => undefined)
-          : Promise.resolve(previous?.details),
-      ])
-      const { id, preview } = result
+      const priorDetails = block.mediaId && previous?.id !== block.mediaId
+        ? await getGpxPreview(block.mediaId).then(value => value.details).catch(() => undefined)
+        : previous?.details
+      const { id, preview } = await load()
       if (!preview?.details || !preview.segments?.some(segment => segment.length >= 2))
         throw new ApiError(502, 'Le serveur n’a pas renvoyé de tracé GPX exploitable. Réessayez.')
       onChange({
@@ -85,6 +84,7 @@ export function TrailEditor({ block, onChange, onBusy, errors }: {
         trail: prefillTrail(trail, preview.details, priorDetails),
       })
       lastExtraction.current = { id, details: preview.details }
+      setAnalysis({ id, preview })
       const name = localFile?.name ?? selectedName
       if (name) setImported({ id, name })
       if (localFile) pendingUpload.current = undefined
@@ -124,6 +124,11 @@ export function TrailEditor({ block, onChange, onBusy, errors }: {
     block.mediaId && !localName ? `/admin/content/media/${block.mediaId}` : undefined, true,
   )
   const associatedName = localName ?? associatedFile?.nom
+  const localAnalysis = analysis?.id === block.mediaId ? analysis?.preview : undefined
+  const { data: savedAnalysis, error: analysisError } = useResource<GpxPreview>(
+    block.mediaId && !localAnalysis ? `/admin/content/gpx/${block.mediaId}/preview` : undefined, true,
+  )
+  const altitude = localAnalysis ?? savedAnalysis
 
   return (
     <fieldset className="grid min-w-0 gap-4 sm:grid-cols-2" disabled={busy} aria-busy={busy}>
@@ -154,7 +159,28 @@ export function TrailEditor({ block, onChange, onBusy, errors }: {
         {failedFile && <Button variant="secondaire" size="petit" onClick={() => upload(failedFile)}>Réessayer l’import GPX</Button>}
         {block.mediaId && <p role="status">{associatedName ? `Fichier associé : ${associatedName}` : 'Fichier GPX associé.'}</p>}
       </Field>
-      {busy && <p className="sm:col-span-2" role="status">Analyse du fichier GPX…</p>}
+      {busy && <p className="sm:col-span-2" role="status">Analyse du GPX et vérification des altitudes IGN…</p>}
+      {block.mediaId && !busy && <div className="space-y-2 sm:col-span-2">
+        <p role="status">
+          {analysisError ? 'Analyse du GPX indisponible.' : !altitude ? 'Chargement de l’analyse du GPX…'
+            : altitude.enrichment === 'failed' ? 'Enrichissement IGN indisponible. Le GPX reste associé.'
+            : altitude.enrichment === 'partial' ? 'Couverture IGN partielle. Certaines altitudes restent manquantes.'
+            : altitude.enrichment === 'pending' ? 'Altitudes incomplètes. Enrichissement IGN disponible.'
+            : 'Analyse altimétrique terminée.'}
+        </p>
+        {altitude && <>
+          <p className="text-sm text-mist">{altitude.elevationSource === 'mixed' ? 'Altitudes du GPX complétées par l’IGN RGE ALTI.'
+            : altitude.elevationSource === 'ign' ? 'Altitudes calculées à partir du modèle de terrain IGN RGE ALTI.'
+            : altitude.elevationSource === 'gpx' ? 'Altitudes extraites du GPX.' : 'Aucune altitude disponible.'}
+            {altitude.details.departureAt === null && ' Aucun horaire dans le fichier.'}</p>
+          {altitude.enrichment !== 'complete' && <Button variant="secondaire" size="petit" onClick={() => {
+            const id = block.mediaId
+            if (id) void chooseGpx(async () => ({
+              id, preview: await protectedRequest<GpxPreview>(`/admin/content/gpx/${id}/elevation`, 'POST'),
+            }))
+          }}>{altitude.enrichment === 'pending' ? 'Enrichir les altitudes avec l’IGN' : 'Réessayer l’enrichissement altimétrique'}</Button>}
+        </>}
+      </div>}
       <Field label="Nom du parcours" htmlFor={fieldId('name')} required error={nameError}>
         <Input id={fieldId('name')} value={trail.name} maxLength={255} invalid={Boolean(nameError)}
           describedBy={nameError ? `${fieldId('name')}-err` : undefined}
@@ -180,6 +206,11 @@ export function TrailEditor({ block, onChange, onBusy, errors }: {
           </Field>
         )
       })}
+      <label className="flex items-center gap-2 text-sm sm:col-span-2">
+        <input type="checkbox" className="h-5 w-5 accent-forest" checked={visibility.estimatedDuration ?? false}
+          onChange={event => onChange({ visibility: { ...visibility, estimatedDuration: event.target.checked } })} />
+        Afficher la durée de marche estimée (5 km/h sur le plat + 1 h par 600 m de montée)
+      </label>
       {dateFields.map(([key, label]) => {
         const id = fieldId(key)
         const error = errors?.[id]

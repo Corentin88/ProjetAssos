@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import { useToast } from '../hooks/useToast'
-import type { Article, Block } from '../types'
+import type { Article, Block, Category } from '../types'
 import { ApiError, apiUrl, authErrorMessage, protectedRequest } from './auth'
 import { setContent, setContentError } from './db'
 import type { ContentSnapshot } from './db'
@@ -55,7 +55,7 @@ async function mutate<T>(path: string, method: string, body?: object) {
   return result
 }
 
-type ArticleInput = Pick<Article, 'titre' | 'blocks' | 'categorieIds' | 'tagIds' | 'coverMediaId'>
+type ArticleInput = Pick<Article, 'titre' | 'blocks' | 'categorieIds' | 'tagIds' | 'coverMediaId' | 'authorNameFormat'>
 function articlePayload(input: ArticleInput) {
   return {
     ...input,
@@ -84,7 +84,11 @@ export function articleAction(id: string, action: Action, options?: { at?: strin
 }
 
 export function saveClassification(kind: 'categories' | 'tags', nom: string, id?: string) {
-  return mutate(`/classification/${kind}${id ? `/${id}` : ''}`, id ? 'PATCH' : 'POST', { nom })
+  return mutate<Category>(`/classification/${kind}${id ? `/${id}` : ''}`, id ? 'PATCH' : 'POST', { nom })
+}
+
+export function saveMediaClassification(id: string, categorieIds: string[], tagIds: string[]) {
+  return mutate<void>(`/media/${id}/classification`, 'PATCH', { categorieIds, tagIds })
 }
 
 export function deleteClassification(kind: 'categories' | 'tags', id: string) {

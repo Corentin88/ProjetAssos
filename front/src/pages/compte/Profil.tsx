@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Camera, CheckCircle2, Info } from 'lucide-react'
-import type { Avatar as AvatarSpec } from '../../types'
-import { authErrorMessage, requestEmailChange, updateAvatar, updateProfile, uploadAvatar, useCurrentUser } from '../../lib/auth'
+import type { Avatar as AvatarSpec, PublicNameFormat } from '../../types'
+import { authErrorMessage, requestEmailChange, updateAvatar, updateProfile, updatePublicName, uploadAvatar, useCurrentUser } from '../../lib/auth'
+import { publicNameOptions } from '../../lib/publicName'
 import { Avatar } from '../../components/ui/misc'
-import { Button, Field, Input } from '../../components/ui/form'
+import { Button, Field, Input, Select } from '../../components/ui/form'
 import { Alert } from '../../components/ui/feedback'
 import { useToast } from '../../hooks/useToast'
 import { validateEmail } from '../../hooks/common'
@@ -22,8 +23,12 @@ export function Profil() {
   const [enCours, setEnCours] = useState(false)
   const [fichierAvatar, setFichierAvatar] = useState<File>()
   const [photoGoogleEnEchec, setPhotoGoogleEnEchec] = useState<string>()
+  const [publicFormat, setPublicFormat] = useState<PublicNameFormat>()
 
   if (!user) return null
+  const currentFormat = user.publicNameFormat ?? 'INITIAL'
+  const chosenFormat = publicFormat ?? currentFormat
+  const publicOptions = publicNameOptions(user.prenom, user.nom)
 
   const couleurParDefaut = user.avatar.colorIndex ?? 0
   const avatarsPredefinis: AvatarSpec[] = [0, 1, 2, 3, 4, 5].map((i) => ({
@@ -99,6 +104,35 @@ export function Profil() {
             />
           </Field>
           <Button type="submit" disabled={enCours}>Enregistrer mes informations</Button>
+        </form>
+      </section>
+
+      <section aria-labelledby="titre-nom-public" className="rounded-2xl border border-line bg-white p-6">
+        <h2 id="titre-nom-public" className="text-xl text-forest">Identité publique</h2>
+        <form className="mt-4 flex flex-col items-start gap-3" onSubmit={async event => {
+          event.preventDefault()
+          if (enCours || chosenFormat === currentFormat) return
+          setEnCours(true)
+          try {
+            await updatePublicName(chosenFormat)
+            setPublicFormat(undefined)
+            toast('Votre nom public préféré a été enregistré.')
+          } catch (error) {
+            toast(authErrorMessage(error), 'erreur')
+          } finally {
+            setEnCours(false)
+          }
+        }}>
+          <Field label="Nom public préféré" htmlFor="profil-nom-public">
+            <Select id="profil-nom-public" value={chosenFormat} disabled={enCours}
+              onChange={event => setPublicFormat(event.target.value as PublicNameFormat)}>
+              <option value="FULL">{publicOptions.FULL}</option>
+              <option value="INITIAL">{publicOptions.INITIAL}</option>
+              {user.role === 'administrateur' && <option value="ADMIN">Admin</option>}
+            </Select>
+          </Field>
+          <p className="text-sm text-mist">Utilisé sur votre profil et pour vos nouvelles contributions publiques.</p>
+          <Button type="submit" disabled={enCours || chosenFormat === currentFormat}>Enregistrer le nom public</Button>
         </form>
       </section>
 

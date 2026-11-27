@@ -7,7 +7,7 @@ export interface GpxPoint {
 }
 
 const radians = Math.PI / 180;
-function distanceKm([latA, lonA]: Point, [latB, lonB]: Point) {
+export function distanceKm([latA, lonA]: Point, [latB, lonB]: Point) {
   const haversine = Math.sin((latB - latA) * radians / 2) ** 2
     + Math.cos(latA * radians) * Math.cos(latB * radians)
     * Math.sin((lonB - lonA) * radians / 2) ** 2;

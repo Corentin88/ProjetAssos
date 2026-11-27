@@ -14,6 +14,7 @@ import {
 } from 'class-validator';
 import {
   AvatarKind,
+  PublicNameFormat,
   UserRole,
   UserStatus,
 } from '../../generated/prisma/client.js';
@@ -41,6 +42,11 @@ export class NamesDto {
   @IsString()
   @Length(1, 100)
   lastName: string;
+}
+
+export class PublicNameDto {
+  @IsEnum(PublicNameFormat)
+  publicNameFormat: PublicNameFormat;
 }
 
 export class AdminProfileDto extends NamesDto {

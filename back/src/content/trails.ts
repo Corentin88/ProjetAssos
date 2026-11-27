@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import {
   Injectable,
   NotFoundException,
@@ -26,6 +27,8 @@ import { ContentInputError } from './content-input.error.js';
 import { describeGpx, sampleGpx } from './gpx-details.js';
 import type { GpxPoint } from './gpx-details.js';
 import { defaultMapSettings, storedMapBlock } from './map-blocks.js';
+import { lookupElevations, mergeElevations } from './ign-altimetry.js';
+import type { ElevationAnchor } from './ign-altimetry.js';
 
 export class TrailDto {
   @IsString() @MaxLength(255) name: string;
@@ -43,8 +46,9 @@ const directory = 'storage/trails';
 const decimal = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
 const pointPaths = ['gpx/trk/trkseg/trkpt', 'gpx/rte/rtept'];
 const namePaths = ['gpx/trk/name', 'gpx/rte/name', 'gpx/metadata/name', 'gpx/name'];
+const gpxDecimal = new Intl.NumberFormat('en-US', { useGrouping: false, maximumSignificantDigits: 17 });
 
-export function parseGpx(file: Buffer, interactive = true) {
+function parseTrack(file: Buffer) {
   try {
     const parser = new SaxesParser({ xmlns: true });
     const path: string[] = [];
@@ -119,7 +123,7 @@ export function parseGpx(file: Buffer, interactive = true) {
       if (point && pointPaths.some(path => location === path + '/ele')) {
         const raw = content.trim();
         const elevation = Number(raw);
-        if (decimal.test(raw) && Number.isFinite(elevation)) point.elevation = elevation;
+        if (decimal.test(raw) && Math.abs(elevation) <= 12_000) point.elevation = elevation;
       }
       if (point && pointPaths.some(path => location === path + '/time')) {
         const raw = content.trim();
@@ -142,6 +146,23 @@ export function parseGpx(file: Buffer, interactive = true) {
       .close();
     const drawable = segments.filter(points => points.length >= 2);
     if (!drawable.length) throw new Error();
+    return { name: namePaths.map(path => names.get(path)).find(Boolean) ?? '', segments };
+  } catch {
+    throw new ContentInputError('Sélectionnez un fichier GPX valide contenant un tracé ou un itinéraire d’au moins deux points.');
+  }
+}
+
+function hasMissingElevations(segments: GpxPoint[][]) {
+  return segments.some(segment => segment.some(point => point.elevation === undefined));
+}
+
+function trackPreview(track: ReturnType<typeof parseTrack>, interactive: boolean, anchors?: ElevationAnchor[], failed = false) {
+    const segments = anchors ? mergeElevations(track.segments, anchors) : track.segments;
+    const drawable = segments.filter(points => points.length >= 2);
+    const missing = hasMissingElevations(segments);
+    const fromIgn = anchors?.some(anchor => anchor[2] !== null) ?? false;
+    const fromGpx = track.segments.some(segment => segment.some(point => point.elevation !== undefined));
+    const details = describeGpx(track.name, segments);
     // La carte reçoit un tracé simplifié, sans métadonnées ni fichier d’origine.
     const segmentStride = Math.ceil(drawable.length / 160);
     const selection = drawable.filter(
@@ -157,12 +178,20 @@ export function parseGpx(file: Buffer, interactive = true) {
             index % stride === 0 || index === points.length - 1,
         ).map(point => point.coordinates),
       ),
-      details: describeGpx(namePaths.map(path => names.get(path)).find(Boolean) ?? '', segments),
+      details: {
+        ...details,
+        estimatedDurationSeconds: details.durationSeconds === null && details.elevationGain !== null && !missing
+          ? Math.round((details.distance / 5 + details.elevationGain / 600) * 60) * 60 : null,
+      },
       samples: interactive ? sampleGpx(segments) : [],
+      elevationSource: fromIgn ? fromGpx ? 'mixed' as const : 'ign' as const : fromGpx ? 'gpx' as const : null,
+      enrichment: failed ? 'failed' as const : !missing ? 'complete' as const : anchors ? 'partial' as const : 'pending' as const,
+      enrichedAvailable: fromIgn,
     };
-  } catch {
-    throw new ContentInputError('Sélectionnez un fichier GPX valide contenant un tracé ou un itinéraire d’au moins deux points.');
-  }
+}
+
+export function parseGpx(file: Buffer, interactive = true) {
+  return trackPreview(parseTrack(file), interactive);
 }
 
 export function parseGpxUpload(file?: Buffer) {
@@ -196,6 +225,7 @@ export function gpxPath(key: string) {
 
 @Injectable()
 export class TrailsService {
+  private readonly pending = new Map<string, Promise<Awaited<ReturnType<TrailsService['enrichTrack']>>>>();
   constructor(
     private readonly prisma: PrismaService,
     private readonly sessions: SessionService,
@@ -229,12 +259,13 @@ export class TrailsService {
 
   async upload(actor: Principal, file?: Buffer, originalName?: string, folderId?: string) {
     const data = file ?? Buffer.alloc(0);
-    const preview = parseGpxUpload(data);
+    const original = parseGpxUpload(data);
     const path = `trails/${randomUUID()}.gpx`;
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await writeFile(gpxPath(path), data, { flag: 'wx', mode: 0o600 });
+    let id: string;
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      id = await this.prisma.$transaction(async (tx) => {
         await lockAdmin(tx, this.sessions, actor);
         await lockMediaFolder(tx, folderId);
         const name =
@@ -260,7 +291,7 @@ export class TrailsService {
           'CREATE',
           'Fichier GPX importé.',
         );
-        return { id: media.id, preview };
+        return media.id;
       });
     } catch (error) {
       const stored = await this.prisma.media
@@ -269,22 +300,62 @@ export class TrailsService {
       if (stored === null) await unlink(gpxPath(path)).catch(() => {});
       throw error;
     }
+    const preview = original.enrichment === 'pending' ? await this.enrich(actor, id) : original;
+    return { id, preview };
   }
 
   async preview(id: string) {
     const media = await this.prisma.media.findFirst({
       where: { id, ...gpxLibrary },
-      select: { path: true },
+      select: { path: true, gpxElevations: true },
     });
     if (!media) throw new NotFoundException();
-    return this.readPreview(media.path);
+    return this.readPreview(media.path, media.gpxElevations);
   }
 
-  private async readPreview(path: string, interactive = true) {
+  async enrich(actor: Principal, id: string) {
+    await this.prisma.$transaction(tx => lockAdmin(tx, this.sessions, actor));
+    const existing = this.pending.get(id);
+    if (existing) return existing;
+    if (this.pending.size >= 4) {
+      const preview = await this.preview(id);
+      return { ...preview, enrichment: 'failed' as const };
+    }
+    const task = this.enrichTrack(id).finally(() => this.pending.delete(id));
+    this.pending.set(id, task);
+    return task;
+  }
+
+  private async enrichTrack(id: string) {
+    const media = await this.prisma.media.findFirst({
+      where: { id, ...gpxLibrary }, select: { path: true, gpxElevations: true },
+    });
+    if (!media) throw new NotFoundException();
+    const track = await this.readTrack(media.path);
+    const previous = media.gpxElevations as ElevationAnchor[] | null;
+    const current = trackPreview(track, true, previous ?? undefined);
+    if (current.enrichment === 'complete') return current;
+    try {
+      const anchors = await lookupElevations(track.segments);
+      const preview = trackPreview(track, true, anchors);
+      if (previous && previous.filter(anchor => anchor[2] !== null).length > anchors.filter(anchor => anchor[2] !== null).length)
+        return { ...current, enrichment: 'partial' as const };
+      await this.prisma.media.updateMany({ where: { id, ...gpxLibrary }, data: { gpxElevations: anchors } });
+      return preview;
+    } catch {
+      return { ...current, enrichment: 'failed' as const };
+    }
+  }
+
+  private async readTrack(path: string) {
     const file = await readFile(gpxPath(path)).catch(() => {
       throw new ContentInputError('Le fichier GPX est indisponible. Sélectionnez un autre fichier.');
     });
-    return parseGpx(file, interactive);
+    return parseTrack(file);
+  }
+
+  private async readPreview(path: string, elevations: Prisma.JsonValue, interactive = true) {
+    return trackPreview(await this.readTrack(path), interactive, (elevations as ElevationAnchor[] | null) ?? undefined);
   }
 
   async blockPreview(tx: Prisma.TransactionClient, mediaId: string) {
@@ -296,8 +367,8 @@ export class TrailsService {
       { id: string }[]
     >`SELECT id FROM media WHERE id = ${media.id}::uuid FOR KEY SHARE`;
     if (!locked.length) throw new ContentInputError('Le fichier GPX est indisponible. Sélectionnez un autre fichier.');
-    const { segments } = await this.readPreview(media.path, false);
-    return { segments };
+    const { segments, enrichedAvailable, elevationSource } = await this.readPreview(media.path, media.gpxElevations, false);
+    return { segments, enrichedAvailable, elevationSource };
   }
 
   async data(tx: Prisma.TransactionClient, trail: TrailDto) {
@@ -311,13 +382,48 @@ export class TrailsService {
   }
 
   async download(articleId: string, blockId?: string) {
-    const { path } = await this.publishedTrail(articleId, blockId, 'download');
-    return this.openDownload(path);
+    const { path, elevations } = await this.publishedTrail(articleId, blockId, 'download');
+    const enriched = await this.enrichedDownload(path, elevations);
+    return enriched ? { stream: Readable.from([enriched]), size: enriched.length } : this.openDownload(path);
+  }
+
+  private async enrichedDownload(path: string, elevations: Prisma.JsonValue) {
+    if (!Array.isArray(elevations) || !elevations.length) return;
+    const track = await this.readTrack(path).catch(() => undefined);
+    if (!track || !hasMissingElevations(track.segments)) return;
+    const anchors: ElevationAnchor[] = [];
+    for (const entry of elevations) {
+      if (!Array.isArray(entry) || entry.length !== 3) return;
+      const [segment, point, metres] = entry;
+      if (
+        typeof segment !== 'number' || !Number.isInteger(segment) ||
+        typeof point !== 'number' || !Number.isInteger(point) || !track.segments[segment]?.[point] ||
+        (metres !== null && (typeof metres !== 'number' || !Number.isFinite(metres) || Math.abs(metres) > 12_000))
+      ) return;
+      anchors.push([segment, point, metres]);
+    }
+    // Une réponse vide, hors couverture ou sans mesure ajoutée laisse l’original en téléchargement.
+    const enriched = mergeElevations(track.segments, anchors);
+    const hasAddedAltitude = enriched.some((segment, index) => segment.some((point, position) =>
+      point.elevation !== undefined && track.segments[index][position].elevation === undefined,
+    ));
+    if (!hasAddedAltitude) return;
+    const segments = enriched.map(segment =>
+      '<trkseg>' + segment.map(({ coordinates: [lat, lon], elevation, time }) =>
+        `<trkpt lat="${gpxDecimal.format(lat)}" lon="${gpxDecimal.format(lon)}">` +
+        (elevation === undefined ? '' : `<ele>${gpxDecimal.format(elevation)}</ele>`) +
+        (time === undefined ? '' : `<time>${new Date(time).toISOString()}</time>`) + '</trkpt>',
+      ).join('') + '</trkseg>',
+    ).join('');
+    return Buffer.from('<?xml version="1.0" encoding="UTF-8"?>' +
+      '<gpx version="1.1" creator="ProjetAssos" xmlns="http://www.topografix.com/GPX/1/1">' +
+      '<metadata><desc>Altitudes du GPX complétées par le modèle IGN RGE ALTI.</desc></metadata>' +
+      `<trk>${segments}</trk></gpx>`);
   }
 
   async map(articleId: string, blockId?: string) {
-    const { path, trail } = await this.publishedTrail(articleId, blockId, 'map');
-    const { samples } = await this.readPreview(path);
+    const { path, trail, elevations } = await this.publishedTrail(articleId, blockId, 'map');
+    const { samples } = await this.readPreview(path, elevations);
     const settings = trail?.mapSettings ?? defaultMapSettings;
     const withElevation = !trail || settings.profile || trail.visibility.altitude;
     return { samples: samples.map(segment => segment.map(point => ({
@@ -351,20 +457,24 @@ export class TrailsService {
       if (mapBlock?.kind !== 'randonnee' || !mapBlock.trail.gpxMediaId) throw new NotFoundException();
       const media = await this.prisma.media.findFirst({
         where: { id: mapBlock.trail.gpxMediaId, ...gpxLibrary },
-        select: { path: true },
+        select: { path: true, gpxElevations: true },
       });
       if (!media) throw new NotFoundException();
-      return { path: media.path, trail: mapBlock.trail };
+      return {
+        path: media.path,
+        trail: mapBlock.trail,
+        elevations: access === 'download' || mapBlock.trail.mapPreview?.enrichedAvailable ? media.gpxElevations : null,
+      };
     }
     const trail = await this.prisma.trail.findFirst({
       where: {
         version,
         gpxMedia: gpxLibrary,
       },
-      include: { gpxMedia: { select: { path: true } } },
+      include: { gpxMedia: { select: { path: true, gpxElevations: true } } },
     });
     if (!trail) throw new NotFoundException();
-    return { path: trail.gpxMedia.path };
+    return { path: trail.gpxMedia.path, elevations: trail.gpxMedia.gpxElevations };
   }
 
   private async openDownload(path: string | undefined) {

@@ -36,6 +36,7 @@ import type { Principal } from '../auth/session.service.js';
 import { contentLog } from '../content/content.shared.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { presentAvatar, profileFields } from '../profiles/profile-avatar.js';
+import { formatPublicName } from '../profiles/public-name.js';
 
 class CommentDto {
   @IsString()
@@ -92,7 +93,7 @@ function nom(person: Entry['user'], prive: boolean) {
     : `${profile.firstName} ${Array.from(profile.lastName)[0] ?? ''}.`;
 }
 
-function present(comment: Entry, privateView = false, authenticated = true) {
+function present(comment: Entry, privateView = false, authenticated = true, viewerId?: string) {
   const visible = comment.status === 'PUBLISHED';
   const title =
     comment.article.versions.find((v) => v.kind === 'PUBLISHED')?.title ??
@@ -104,9 +105,11 @@ function present(comment: Entry, privateView = false, authenticated = true) {
     id: comment.id,
     articleId: comment.articleId,
     parentId: comment.parentId,
-    auteurId: authenticated && (visible || privateView) ? comment.userId : null,
+    auteurId: authenticated && (privateView || (visible && comment.publicNameFormat !== 'ADMIN')) ? comment.userId : null,
+    ...(viewerId && viewerId === comment.userId ? { isOwn: true } : {}),
     auteurAvatar:
       visible &&
+      (privateView || comment.publicNameFormat !== 'ADMIN') &&
       comment.userId &&
       comment.user?.profile &&
       (authenticated || comment.user.profile.avatarKind === 'PRESET')
@@ -114,7 +117,7 @@ function present(comment: Entry, privateView = false, authenticated = true) {
         : undefined,
     auteurLabel:
       visible || privateView
-        ? nom(comment.user, privateView)
+        ? privateView ? nom(comment.user, true) : formatPublicName(comment.user?.profile, comment.publicNameFormat ?? 'INITIAL')
         : 'Commentaire supprimé',
     contenu: visible ? (comment.content ?? '') : '',
     createdAt: comment.createdAt,
@@ -133,14 +136,14 @@ export class CommentsService {
     private readonly sessions: SessionService,
   ) {}
 
-  async article(articleId: string, authenticated: boolean) {
+  async article(articleId: string, viewerId?: string) {
     return (
       await this.prisma.comment.findMany({
         where: { articleId, article: { status: 'PUBLISHED' } },
         include: common,
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       })
-    ).map((comment) => present(comment, false, authenticated));
+    ).map((comment) => present(comment, false, Boolean(viewerId), viewerId));
   }
 
   async own(userId: string) {
@@ -150,7 +153,7 @@ export class CommentsService {
         include: common,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       })
-    ).map((comment) => present(comment));
+    ).map((comment) => present(comment, false, true, userId));
   }
 
   async profile(userId: string) {
@@ -160,6 +163,7 @@ export class CommentsService {
           userId,
           status: 'PUBLISHED',
           article: { status: 'PUBLISHED' },
+          OR: [{ publicNameFormat: null }, { publicNameFormat: { not: 'ADMIN' } }],
         },
         include: common,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -227,11 +231,17 @@ export class CommentsService {
         if (!parent) throw new BadRequestException();
         if (parent.status === 'PUBLISHED') recipient = parent.userId;
       }
+      const creator = await tx.user.findUniqueOrThrow({
+        where: { id: actor.userId },
+        select: { role: true, profile: { select: { publicNameFormat: true } } },
+      });
+      const preference = creator.profile?.publicNameFormat ?? 'INITIAL';
       const comment = await tx.comment.create({
         data: {
           articleId,
           parentId: dto.parentId,
           userId: actor.userId,
+          publicNameFormat: creator.role !== 'ADMIN' && preference === 'ADMIN' ? 'INITIAL' : preference,
           content,
         },
         include: common,
@@ -248,7 +258,7 @@ export class CommentsService {
           },
         });
       }
-      return present(comment);
+      return present(comment, false, true, actor.userId);
     });
   }
 
@@ -391,8 +401,8 @@ export class CommentsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Headers('authorization') authorization?: string,
   ) {
-    if (authorization) await this.sessions.authenticate(authorization);
-    return this.comments.article(id, Boolean(authorization));
+    const viewer = authorization ? await this.sessions.authenticate(authorization) : undefined;
+    return this.comments.article(id, viewer?.userId);
   }
 
   @Post('articles/:id/comments')

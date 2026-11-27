@@ -1,4 +1,5 @@
 import { Type } from 'class-transformer';
+import { PublicNameFormat } from '../../generated/prisma/client.js';
 import { TrailDto } from './trails.js';
 import { LocationBlockDto, TrailBlockFieldsDto, TrailMapSettingsDto, TrailVisibilityDto } from './map-blocks.dto.js';
 import {
@@ -7,6 +8,7 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsEnum,
   IsInt,
   IsISO8601,
   IsNotEmpty,
@@ -96,6 +98,10 @@ export class BlockDto {
 }
 
 export class ArticleDto {
+  @ValidateIf((_dto, value) => value !== undefined)
+  @IsEnum(PublicNameFormat)
+  authorNameFormat?: PublicNameFormat;
+
   @ValidateIf((_parent, value) => value != null)
   @IsObject()
   @ValidateNested()
@@ -171,6 +177,14 @@ export class MediaDto extends NamedDto {
 
 export class MediaLibraryQuery {
   @ValidateIf((_dto, value) => value !== undefined)
+  @IsUUID()
+  category?: string;
+
+  @ValidateIf((_dto, value) => value !== undefined)
+  @IsUUID()
+  tag?: string;
+
+  @ValidateIf((_dto, value) => value !== undefined)
   @IsString()
   @MaxLength(255)
   q?: string;
@@ -193,6 +207,20 @@ export class MediaLibraryQuery {
   @Min(1)
   @Max(1_000_000)
   page?: number;
+}
+
+export class MediaClassificationDto {
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ArrayUnique()
+  @IsUUID(undefined, { each: true })
+  categorieIds: string[];
+
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ArrayUnique()
+  @IsUUID(undefined, { each: true })
+  tagIds: string[];
 }
 
 export class MediaFolderDto extends NamedDto {

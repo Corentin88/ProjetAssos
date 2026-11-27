@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import type { To } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { AVATAR_COLORS } from '../../data/users'
@@ -121,7 +122,7 @@ export function TagChip({ to, children }: { to?: string; children: React.ReactNo
 }
 
 /** Pastille de catégorie cliquable */
-export function CategoryChip({ to, children }: { to?: string; children: React.ReactNode }) {
+export function CategoryChip({ to, children }: { to?: To; children: React.ReactNode }) {
   const cls =
     'inline-flex items-center rounded-full bg-ocre-pale px-3 py-1 text-[0.875rem] font-bold text-ocre-dark hover:bg-ocre hover:text-white'
   if (to) {

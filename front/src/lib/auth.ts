@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import type { ApiAvatar, Avatar, User } from '../types'
+import type { ApiAvatar, Avatar, PublicNameFormat, User } from '../types'
 
 const api = (import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1').replace(/\/+$/, '')
 const sessionLock = `projetassos-auth:${api}`
@@ -17,6 +17,7 @@ type ApiProfile = {
   authMethods: ('password' | 'google')[]
   avatar: ApiAvatar
   hasPersonalAvatar?: boolean
+  publicNameFormat?: PublicNameFormat
   googleAvatar?: string | null
 }
 
@@ -24,6 +25,7 @@ type ApiPublicProfile = {
   id: string
   firstName: string
   lastInitial: string
+  publicName?: string
   createdAt: string
   avatar: ApiAvatar
   commentCount: number
@@ -85,6 +87,7 @@ function mapProfile(profile: ApiProfile): User {
     statut: profile.status === 'ACTIVE' ? 'actif' : 'suspendu',
     avatar: mapAvatar(profile.avatar),
     hasPersonalAvatar: profile.hasPersonalAvatar ?? profile.avatar.kind === 'PERSONAL',
+    publicNameFormat: profile.publicNameFormat ?? 'INITIAL',
     googleAvatar: profile.googleAvatar ?? undefined,
     authMethods: profile.authMethods.map(method => method === 'password' ? 'motdepasse' : 'google'),
     createdAt: profile.createdAt,
@@ -221,6 +224,11 @@ export async function updateProfile(firstName: string, lastName: string) {
   if (snapshot.user?.id === profile.id) publish({ status: 'ready', user: profile })
 }
 
+export async function updatePublicName(publicNameFormat: PublicNameFormat) {
+  const profile = mapProfile(await protectedRequest<ApiProfile>('/profiles/me/public-name', 'PATCH', { publicNameFormat }))
+  if (snapshot.user?.id === profile.id) publish({ status: 'ready', user: profile })
+}
+
 export async function updateAvatar(avatar: Avatar) {
   const body = avatar.type === 'initiales' ? { kind: 'PRESET', preset: avatar.colorIndex }
     : { kind: avatar.type === 'image' ? 'PERSONAL' : avatar.type === 'google' ? 'GOOGLE' : 'DEFAULT' }
@@ -290,7 +298,7 @@ export async function getPublicProfile(id: string) {
   const profile = await protectedRequest<ApiPublicProfile>(`/profiles/${encodeURIComponent(id)}`)
   return {
     id: profile.id, prenom: profile.firstName, nom: profile.lastInitial,
-    avatar: mapAvatar(profile.avatar), createdAt: profile.createdAt, commentCount: profile.commentCount,
+    avatar: mapAvatar(profile.avatar), createdAt: profile.createdAt, commentCount: profile.commentCount, publicName: profile.publicName,
   }
 }
 

@@ -4,7 +4,11 @@ import { ContentInputError } from './content-input.error.js';
 import type { LocationBlockDto, TrailBlockFieldsDto, TrailMapSettingsDto, TrailVisibilityDto } from './map-blocks.dto.js';
 import type { Point } from './gpx-details.js';
 
-type MapPreview = { segments: Point[][] };
+type MapPreview = {
+  segments: Point[][];
+  enrichedAvailable?: boolean;
+  elevationSource?: 'gpx' | 'ign' | 'mixed' | null;
+};
 export const defaultMapSettings: TrailMapSettingsDto = { slopes: true, profile: true, initialMode: 'classic' };
 type StoredTrail = TrailBlockFieldsDto & {
   visibility: TrailVisibilityDto;
@@ -35,7 +39,7 @@ export function mapBlockInput(block: BlockDto, position: number, mapPreview: Map
   const mapSettings = block.mapSettings ?? defaultMapSettings;
   if (!mapSettings.slopes && mapSettings.initialMode === 'slopes')
     throw new ContentInputError(`Bloc ${position + 1} : autorisez les pentes en couleur ou choisissez le tracé classique.`);
-  const { name, description, distance, durationSeconds, departureAt, arrivalAt, elevationGain, elevationLoss, elevationMin, elevationMax, difficulty } = block.trail;
+  const { name, description, distance, durationSeconds, estimatedDurationSeconds, departureAt, arrivalAt, elevationGain, elevationLoss, elevationMin, elevationMax, difficulty } = block.trail;
   const departure = departureAt ? Date.parse(departureAt) : null;
   const arrival = arrivalAt ? Date.parse(arrivalAt) : null;
   if (Number.isNaN(departure) || Number.isNaN(arrival))
@@ -49,6 +53,7 @@ export function mapBlockInput(block: BlockDto, position: number, mapPreview: Map
     data: { kind: 'randonnee', trail: {
       name: name.trim(), description: description.trim(), distance: distance ?? null,
       durationSeconds: durationSeconds ?? null,
+      estimatedDurationSeconds: estimatedDurationSeconds ?? null,
       departureAt: departure === null ? null : new Date(departure).toISOString(),
       arrivalAt: arrival === null ? null : new Date(arrival).toISOString(),
       elevationGain: elevationGain ?? null, elevationLoss: elevationLoss ?? null,
@@ -71,6 +76,7 @@ export function presentMapBlock(block: StoredMapBlock, id: string, admin: boolea
     type: block.kind,
     mediaId: admin ? gpxMediaId ?? undefined : undefined,
     gpxAvailable: Boolean(gpxMediaId && mapPreview?.segments.some(segment => segment.length >= 2)),
+    elevationSource: admin || visibility.elevation || visibility.altitude || visibility.map ? mapPreview?.elevationSource : undefined,
     visibility,
     mapSettings,
     mapPreview: admin || visibility.map ? mapPreview : null,
@@ -79,6 +85,7 @@ export function presentMapBlock(block: StoredMapBlock, id: string, admin: boolea
       description: visibility.description ? trail.description : '',
       distance: visibility.distance ? trail.distance : null,
       durationSeconds: visibility.duration ? trail.durationSeconds : null,
+      estimatedDurationSeconds: visibility.estimatedDuration ? trail.estimatedDurationSeconds ?? null : null,
       departureAt: visibility.dates && visibility.departure !== false ? trail.departureAt : null,
       arrivalAt: visibility.dates && visibility.arrival !== false ? trail.arrivalAt : null,
       elevationGain: visibility.elevation && visibility.elevationGain !== false ? trail.elevationGain : null,

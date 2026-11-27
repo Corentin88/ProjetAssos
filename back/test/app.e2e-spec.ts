@@ -35,6 +35,13 @@ describe('AppController (e2e)', () => {
       .expect('Hello World!');
   });
 
+  it('refuse le téléchargement GPX à un visiteur anonyme', () => {
+    const id = '00000000-0000-4000-a000-000000000000';
+    return request(app.getHttpServer())
+      .get(`/api/v1/articles/${id}/blocks/${id}/gpx`)
+      .expect(401);
+  });
+
   afterEach(async () => {
     await app.close();
   });

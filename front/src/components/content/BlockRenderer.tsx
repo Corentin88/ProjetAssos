@@ -58,6 +58,7 @@ export function BlockView({ block, sousPage = false, articleId }: { block: Block
     case 'randonnee':
       return block.trail ? <TrailDetails trail={block.trail} mapPreview={block.mapPreview} visibility={block.visibility}
         mapSettings={block.mapSettings} mediaId={block.mediaId} gpxAvailable={block.gpxAvailable}
+        elevationSource={block.elevationSource}
         articleId={articleId} blockId={block.id} /> : null
     case 'localisation':
       return block.location ? <LocationDetails location={block.location} /> : null

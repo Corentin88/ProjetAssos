@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { ChevronDown, RotateCcw, Search, SearchX, SlidersHorizontal, X } from 'lucide-react'
 import { useDb, useDbVersion } from '../../lib/db'
 import { getCategory, getTag, publishedYears, searchArticles } from '../../lib/selectors'
@@ -8,6 +8,7 @@ import { Button, Field, Input, Select } from '../ui/form'
 import { EmptyState } from '../ui/feedback'
 import { Pagination } from '../ui/nav'
 import { ArticleCard } from './ArticleCard'
+import { ArticleCategories, articleResultsHash } from './ArticleCategories'
 
 const PAR_PAGE = 6
 
@@ -21,6 +22,8 @@ export function ArticlesExplorer({ titreResultats }: { titreResultats?: string }
   const db = useDb()
   const version = useDbVersion()
   const [params, setParams] = useSearchParams()
+  const { hash, key } = useLocation()
+  const navigate = useNavigate()
 
   const q = params.get('q') ?? ''
   const annee = params.get('annee') ?? ''
@@ -34,22 +37,24 @@ export function ArticlesExplorer({ titreResultats }: { titreResultats?: string }
   const nbFiltres = [annee, cat, tag, tri !== 'date', ordre !== 'decroissant'].filter(Boolean).length
   const rechercheActive = Boolean(q) || nbFiltres > 0
 
-  /** Panneau de filtres : ouvert par défaut si des filtres avancés sont déjà
-   *  actifs (lien « recherche avancée », badge de catégorie ou de tag cliqué),
-   *  sinon fermé — la recherche simple est immédiatement visible. */
+  const versResultats = hash === articleResultsHash
   const [panneauOuvert, setPanneauOuvert] = useState(
-    () => params.has('avancee') || nbFiltres > 0,
+    () => !versResultats && (params.has('avancee') || (!cat && nbFiltres > 0)),
   )
 
-  // « avancee » ouvre le panneau même si la liste est déjà montée, par exemple après un clic sur un badge.
-  // Le signal et l'ancien nom du paramètre sont retirés sans ajouter d'entrée dans l'historique.
+  // Une nouvelle navigation par catégorie replie le panneau, même sur une liste déjà montée.
+  useLayoutEffect(() => {
+    if (versResultats) setPanneauOuvert(false)
+  }, [key, versResultats])
+
+  // Les badges de tags et le lien de recherche avancée conservent leur ouverture explicite.
   useEffect(() => {
     if (!params.has('avancee') && !params.has('categorie')) return
-    if (params.has('avancee')) setPanneauOuvert(true)
+    if (params.has('avancee') && !versResultats) setPanneauOuvert(true)
     const next = normaliserParametresArticles(params)
     next.delete('avancee')
-    setParams(next, { replace: true })
-  }, [params, setParams])
+    navigate({ search: next.toString(), hash }, { replace: true })
+  }, [params, navigate, hash, versResultats])
 
   const maj = (patch: Record<string, string | undefined>, replace = false) => {
     const next = normaliserParametresArticles(params)
@@ -111,13 +116,15 @@ export function ArticlesExplorer({ titreResultats }: { titreResultats?: string }
     <div>
       {/* Recherche progressive : barre simple + panneau de filtres dépliable */}
       <form
+        id={articleResultsHash.slice(1)}
+        tabIndex={-1}
         role="search"
         aria-label="Rechercher et filtrer les articles"
         onSubmit={(e) => e.preventDefault()}
-        className="carte p-4 sm:p-6"
+        className="carte scroll-mt-20 p-3 sm:p-6"
       >
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <div className="relative flex-1">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 sm:gap-3">
+          <div className="relative min-w-0">
             <Search
               aria-hidden="true"
               className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-mist"
@@ -137,7 +144,7 @@ export function ArticlesExplorer({ titreResultats }: { titreResultats?: string }
             onClick={() => setPanneauOuvert((o) => !o)}
             aria-expanded={panneauOuvert}
             aria-controls="panneau-filtres"
-            className={`inline-flex min-h-[52px] shrink-0 items-center justify-center gap-2 rounded-xl px-5 font-bold transition-colors ${
+            className={`inline-flex min-h-[52px] shrink-0 items-center justify-center gap-1 rounded-xl px-2.5 font-bold transition-colors motion-reduce:transition-none sm:gap-2 sm:px-5 ${
               panneauOuvert
                 ? 'bg-forest text-white hover:bg-forest-dark'
                 : 'border border-line bg-white text-forest hover:bg-leaf-pale'
@@ -157,7 +164,7 @@ export function ArticlesExplorer({ titreResultats }: { titreResultats?: string }
             ) : null}
             <ChevronDown
               aria-hidden="true"
-              className={`h-5 w-5 transition-transform ${panneauOuvert ? 'rotate-180' : ''}`}
+              className={`hidden h-5 w-5 transition-transform motion-reduce:transition-none sm:block ${panneauOuvert ? 'rotate-180' : ''}`}
             />
           </button>
         </div>
@@ -266,8 +273,9 @@ export function ArticlesExplorer({ titreResultats }: { titreResultats?: string }
         </div>
       </form>
 
-      <h2 className="mt-10 text-xl text-forest">
-        {titreResultats ?? 'Résultats'}
+      <div className="mt-2"><ArticleCategories active={cat} filters={params} compact /></div>
+      <h2 className="mt-4 text-xl text-forest">
+        {titreResultats ?? (cat ? getCategory(cat)?.nom ?? 'Résultats' : 'Résultats')}
       </h2>
 
       {visibles.length === 0 ? (

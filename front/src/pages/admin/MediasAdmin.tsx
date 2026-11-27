@@ -4,17 +4,19 @@ import type { FormEvent } from 'react'
 import type { LibraryDetails, LibraryItem } from '../../types'
 import { AdminPageHead } from '../../components/layout/AdminLayout'
 import { FolderOptions, folderPath, MediaLibrary, useMediaLibrary } from '../../components/admin/MediaLibrary'
+import { QuickClassification } from '../../components/admin/QuickClassification'
 import { ContentImage } from '../../components/content/ContentImage'
 import { Alert } from '../../components/ui/feedback'
 import { Button, Field, Input, Select, Textarea } from '../../components/ui/form'
 import { Modal } from '../../components/ui/overlay'
 import { ApiError, authErrorMessage, protectedRequest } from '../../lib/auth'
 import { useResource } from '../../lib/community'
-import { removeMedia, replaceMedia, saveMediaMetadata, uploadMedia } from '../../lib/content'
+import { removeMedia, replaceMedia, saveMediaClassification, saveMediaMetadata, uploadMedia } from '../../lib/content'
+import { useDb } from '../../lib/db'
 import { formatDate, formatTaille } from '../../lib/format'
 import { useToast } from '../../hooks/useToast'
 
-type Action = 'import' | 'create-folder' | 'rename-folder' | 'delete-folder' | 'move' | 'edit' | 'replace' | 'delete'
+type Action = 'import' | 'create-folder' | 'rename-folder' | 'delete-folder' | 'move' | 'edit' | 'replace' | 'delete' | 'classify'
 const titles: Record<Action, string> = {
   import: 'Importer des médias',
   'create-folder': 'Créer un dossier',
@@ -24,6 +26,7 @@ const titles: Record<Action, string> = {
   edit: 'Modifier les métadonnées',
   replace: 'Remplacer le fichier image',
   delete: 'Supprimer le média',
+  classify: 'Catégories et tags du média',
 }
 
 const libraryUrl = '/admin/content'
@@ -31,6 +34,7 @@ const imageFormats = 'image/jpeg,image/png,image/webp'
 const folderName = 'Non classés'
 
 export function MediasAdmin() {
+  const { categories, tags } = useDb()
   const library = useMediaLibrary()
   const { results, folders, current } = library
   const { toast } = useToast()
@@ -79,6 +83,7 @@ export function MediasAdmin() {
       edit: 'Métadonnées enregistrées.',
       replace: 'Image remplacée.',
       delete: 'Média supprimé.',
+      classify: 'Catégories et tags enregistrés.',
     }[action])
   }
 
@@ -126,6 +131,8 @@ export function MediasAdmin() {
               <dt>Taille</dt><dd>{formatTaille(item.tailleKo)}</dd>
               <dt>Ajout</dt><dd>{formatDate(item.createdAt)}</dd>
               <dt>Dossier</dt><dd className="break-all">{item.folderId ? folderPath(library.byId, item.folderId).map(folder => folder.name).join(' / ') || 'Dossier indisponible' : folderName}</dd>
+              <dt>Catégories</dt><dd className="break-words">{categories.filter(category => item.categorieIds.includes(category.id)).map(category => category.nom).join(', ') || '—'}</dd>
+              <dt>Tags</dt><dd className="break-words">{tags.filter(tag => item.tagIds.includes(tag.id)).map(tag => tag.nom).join(', ') || '—'}</dd>
               {item.type === 'IMAGE' && item.largeur > 0 && item.hauteur > 0 && <>
                 <dt>Dimensions</dt><dd>{item.largeur} × {item.hauteur} px</dd>
               </>}
@@ -139,6 +146,7 @@ export function MediasAdmin() {
             </dl>
             <div className="mt-4 flex flex-wrap gap-2">
               <Button variant="secondaire" size="petit" onClick={() => setOperation({ action: 'edit' })}>Modifier</Button>
+              <Button variant="secondaire" size="petit" onClick={() => setOperation({ action: 'classify' })}>Catégories et tags</Button>
               <Button variant="secondaire" size="petit" onClick={() => setOperation({ action: 'move', ids: [item.id] })}>Déplacer</Button>
               {item.type === 'IMAGE' && <Button variant="secondaire" size="petit" onClick={() => setOperation({ action: 'replace' })}>Remplacer le fichier</Button>}
               <Button variant="danger" size="petit" disabled={used} onClick={() => setOperation({ action: 'delete' })}>Supprimer</Button>
@@ -174,6 +182,9 @@ function MediaAction({ operation, library, item, onClose, onDone }: {
   onDone: (action: Action, ids?: string[]) => Promise<void>
 }) {
   const { action, ids } = operation
+  const { categories, tags } = useDb()
+  const [categorieIds, setCategorieIds] = useState(item?.categorieIds ?? [])
+  const [tagIds, setTagIds] = useState(item?.tagIds ?? [])
   const [folder] = useState(library.current)
   const [name, setName] = useState((action === 'edit' ? item?.nom : action === 'rename-folder' ? folder?.name : '') ?? '')
   const [alt, setAlt] = useState(item?.type === 'IMAGE' ? item.alt : '')
@@ -239,6 +250,9 @@ function MediaAction({ operation, library, item, onClose, onDone }: {
         case 'edit':
           if (item) await saveMediaMetadata(item.id, name.trim(), alt.trim())
           break
+        case 'classify':
+          if (item) await saveMediaClassification(item.id, categorieIds, tagIds)
+          break
         case 'replace':
           if (item && file) await replaceMedia(item.id, file)
           break
@@ -292,6 +306,20 @@ function MediaAction({ operation, library, item, onClose, onDone }: {
         {action === 'edit' && item?.type === 'IMAGE' && <Field label="Texte alternatif" htmlFor="media-alt" required>
           <Textarea id="media-alt" required maxLength={1000} rows={3} value={alt} onChange={event => setAlt(event.target.value)} />
         </Field>}
+        {action === 'classify' && ([
+          { kind: 'categories', label: 'Catégories', choices: categories, ids: categorieIds, update: setCategorieIds },
+          { kind: 'tags', label: 'Tags', choices: tags, ids: tagIds, update: setTagIds },
+        ] as const).map(group => <fieldset key={group.kind} className="min-w-0 rounded-xl border border-line p-3">
+          <legend className="px-1 font-bold">{group.label}</legend>
+          <div className="grid max-h-40 gap-2 overflow-auto">
+            {group.choices.map(choice => <label key={choice.id} className="flex items-center gap-2 break-all">
+              <input type="checkbox" className="h-5 w-5 shrink-0 accent-forest" checked={group.ids.includes(choice.id)}
+                onChange={event => group.update(ids => event.target.checked ? [...ids, choice.id] : ids.filter(id => id !== choice.id))} />
+              {choice.nom}
+            </label>)}
+          </div>
+          <QuickClassification kind={group.kind} onCreated={id => group.update(ids => [...ids, id])} />
+        </fieldset>)}
         {action === 'move' && <Field label="Dossier de destination" htmlFor="media-destination" hint={`${ids?.length ?? 0} média(s) à déplacer.`}>
           <Select id="media-destination" value={destination} onChange={event => setDestination(event.target.value)}>
             <option value="">{folderName}</option><FolderOptions library={library} />

@@ -1,3 +1,4 @@
+import { articleCategoryLink } from '../../components/content/ArticleCategories'
 import { useCurrentUser } from '../../lib/auth'
 import type { Comment } from '../../types'
 import { isDeletedComment, useResource } from '../../lib/community'
@@ -113,16 +114,12 @@ export function ArticleDetail() {
         <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-[0.9375rem] text-mist">
           <span className="inline-flex items-center gap-1.5">
             <User aria-hidden="true" className="h-4 w-4" />
-            {auteur ? (
-              compteActif ? (
+            {auteur && compteActif ? (
                 <Link to={`/profil/${auteur.id}`} className="font-bold underline underline-offset-4 hover:text-forest">
                   {articleAuthorLabel(article)}
                 </Link>
-              ) : (
-                <span className="font-bold">{articleAuthorLabel(article)}</span>
-              )
             ) : (
-              <span>Utilisateur supprimé</span>
+              <span className="font-bold">{articleAuthorLabel(article)}</span>
             )}
           </span>
           <span className="inline-flex items-center gap-1.5">
@@ -166,7 +163,7 @@ export function ArticleDetail() {
               const c = getCategory(cid)
               return c ? (
                 <li key={cid}>
-                  <CategoryChip to={`/actualites?cat=${encodeURIComponent(c.id)}`}>{c.nom}</CategoryChip>
+                  <CategoryChip to={articleCategoryLink(c.id)}>{c.nom}</CategoryChip>
                 </li>
               ) : null
             })}

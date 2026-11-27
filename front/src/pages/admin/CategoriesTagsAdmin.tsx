@@ -221,9 +221,10 @@ export function CategoriesTagsAdmin() {
       >
         <p>
           La catégorie « {aSupprimerCat?.nom} » est utilisée par{' '}
-          <strong>{aSupprimerCat ? nbArticlesCategorie(aSupprimerCat.id) : 0} article(s)</strong>.
+          <strong>{aSupprimerCat ? nbArticlesCategorie(aSupprimerCat.id) : 0} article(s)</strong>
+          {' '}et {db.categories.find(item => item.id === aSupprimerCat?.id)?.mediaCount ?? 0} média(s).
           En confirmant, elle sera supprimée et les articles concernés seront automatiquement
-          dissociés. Les articles eux-mêmes restent conservés et ne sont pas supprimés.
+          dissociés. Les médias utilisant cette catégorie seront aussi dissociés. Les articles et fichiers sont conservés.
         </p>
       </ConfirmDialog>
 
@@ -243,9 +244,10 @@ export function CategoriesTagsAdmin() {
       >
         <p>
           Le tag « {aSupprimerTag?.nom} » est utilisé par{' '}
-          <strong>{aSupprimerTag ? nbArticlesTag(aSupprimerTag.id) : 0} article(s)</strong>. En
+          <strong>{aSupprimerTag ? nbArticlesTag(aSupprimerTag.id) : 0} article(s)</strong>
+          {' '}et {db.tags.find(item => item.id === aSupprimerTag?.id)?.mediaCount ?? 0} média(s). En
           confirmant, il sera supprimé et les articles concernés seront automatiquement dissociés.
-          Les articles eux-mêmes restent conservés et ne sont pas supprimés.
+          Les médias utilisant ce tag seront aussi dissociés. Les articles et fichiers sont conservés.
         </p>
       </ConfirmDialog>
     </>

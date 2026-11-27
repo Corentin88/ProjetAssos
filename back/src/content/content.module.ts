@@ -37,6 +37,7 @@ import {
   ArticleDto,
   CarouselDto,
   MediaDto,
+  MediaClassificationDto,
   MediaFolderDto,
   MediaLibraryQuery,
   MoveMediaDto,
@@ -61,6 +62,7 @@ function snapshot(
         name: true,
         slug: true,
         articles: { select: { version: { select: { articleId: true } } } },
+        _count: { select: { media: true } },
       } as const;
       const items = await articles.list(admin, tx);
       const categories = await tx.category.findMany({
@@ -78,6 +80,7 @@ function snapshot(
               articleCount: new Set(
                 item.articles.map((a) => a.version.articleId),
               ).size,
+              mediaCount: item._count.media,
             }
           : {}),
       });
@@ -290,6 +293,12 @@ class AdminContentController {
     return this.media.move(actor, dto);
   }
 
+  @Patch('media/:id/classification')
+  @HttpCode(204)
+  classifyMedia(@CurrentUser() actor: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: MediaClassificationDto) {
+    return this.media.classify(actor, id, dto);
+  }
+
   @Get('media/:id')
   mediaDetails(@Param('id', ParseUUIDPipe) id: string) {
     return this.media.details(id);
@@ -333,6 +342,12 @@ class AdminContentController {
   @Get('gpx/:id/preview')
   gpxPreview(@Param('id', ParseUUIDPipe) id: string) {
     return this.trails.preview(id);
+  }
+
+  @Post('gpx/:id/elevation')
+  @HttpCode(200)
+  enrichGpx(@CurrentUser() actor: Principal, @Param('id', ParseUUIDPipe) id: string) {
+    return this.trails.enrich(actor, id);
   }
 
   @Post('gpx/preview')
@@ -396,6 +411,12 @@ class AdminContentController {
     if (!name) throw new BadRequestException();
     return this.prisma.$transaction(async (tx) => {
       await lockAdmin(tx, this.sessions, actor);
+      // Deux administrateurs peuvent créer un même libellé en parallèle.
+      const lock = kind === 'categories' ? 8476104 : 8476105;
+      await tx.$queryRaw`SELECT 1 AS locked FROM pg_advisory_xact_lock(${lock}::bigint)`;
+      const where = { name: { equals: name, mode: 'insensitive' as const }, ...(id ? { id: { not: id } } : {}) };
+      const duplicates = kind === 'categories' ? await tx.category.count({ where }) : await tx.tag.count({ where });
+      if (duplicates) throw new ConflictException();
       const slug = contentSlug(name);
       const item =
         kind === 'categories'
