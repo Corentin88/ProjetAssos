@@ -206,20 +206,20 @@ export function AdminLayout() {
 
       <div className="flex flex-1">
         {/* Sidebar desktop */}
-        <aside className={`hidden w-80 shrink-0 flex-col bg-forest-dark p-5 ${navigationCompacte ? '' : 'lg:flex'}`}>
-          <Link to="/admin" className="flex items-center gap-3 rounded-xl p-2 hover:bg-white/10">
-            <img src={FAVICON} alt="" className="h-11 w-11 rounded-xl" />
-            <span className="leading-tight text-white">
-              <span className="block font-bold">Foyer Rural d'Arches</span>
-              <span className="block text-[0.875rem] text-white/70">Espace d'administration</span>
-            </span>
-          </Link>
-          <div className="focus-inverse mt-3 px-2"><CommandesAffichage /></div>
-          <div className="my-5 border-t border-white/15" aria-hidden="true" />
-          <div className="scrollzone flex-1 overflow-y-auto">
+        <aside className={`focus-inverse sticky top-0 hidden max-h-dvh min-h-0 w-80 shrink-0 flex-col self-start bg-forest-dark p-3 lg:h-dvh ${navigationCompacte ? '' : 'lg:flex'}`}>
+          <div className="scrollzone min-h-0 flex-1 overflow-y-auto p-2">
+            <Link to="/admin" className="flex items-center gap-3 rounded-xl p-2 hover:bg-white/10">
+              <img src={FAVICON} alt="" className="h-11 w-11 rounded-xl" />
+              <span className="leading-tight text-white">
+                <span className="block font-bold">Foyer Rural d'Arches</span>
+                <span className="block text-[0.875rem] text-white/70">Espace d'administration</span>
+              </span>
+            </Link>
+            <div className="mt-3 px-2"><CommandesAffichage /></div>
+            <div className="my-5 border-t border-white/15" aria-hidden="true" />
             <AdminNav messagesNonLus={messagesNonLus} />
           </div>
-          <div className="mt-5 border-t border-white/15 pt-5">
+          <div className="shrink-0 border-t border-white/15 pt-2">
             {sessionUser ? (
               <div className="flex items-center gap-3 rounded-xl bg-white/10 p-3 text-white">
                 <Avatar user={sessionUser} size="sm" />
@@ -233,7 +233,7 @@ export function AdminLayout() {
             ) : null}
             <Link
               to="/"
-              className="mt-3 flex items-center gap-3 rounded-xl px-4 py-3 font-bold text-white/85 hover:bg-white/10 hover:text-white"
+              className="mt-2 flex min-h-12 items-center gap-3 rounded-xl px-4 py-2 font-bold text-white/85 hover:bg-white/10 hover:text-white"
             >
               <Home aria-hidden="true" className="h-5 w-5" />
               Voir le site public
@@ -241,7 +241,7 @@ export function AdminLayout() {
             <button
               type="button"
               onClick={onDeconnexion}
-              className="flex w-full items-center gap-3 rounded-xl px-4 py-3 font-bold text-white/85 hover:bg-white/10 hover:text-white"
+              className="flex min-h-12 w-full items-center gap-3 rounded-xl px-4 py-2 font-bold text-white/85 hover:bg-white/10 hover:text-white"
             >
               <LogOut aria-hidden="true" className="h-5 w-5" />
               Déconnexion
@@ -267,10 +267,11 @@ export function AdminLayout() {
                 Fermer
               </button>
             </div>
-            <div className="scrollzone flex-1 overflow-y-auto p-4">
+            <div className="scrollzone min-h-0 flex-1 overflow-y-auto p-4">
               <AdminNav onNavigate={closeDrawer} messagesNonLus={messagesNonLus} />
             </div>
-            <div className="border-t border-white/15 p-4">
+            <div className="focus-inverse shrink-0 border-t border-white/15 p-2 sm:p-4">
+              {sessionUser && <p className="truncate px-4 pt-2 font-bold text-white">{fullName(sessionUser)}</p>}
               <Link
                 to="/"
                 onClick={closeDrawer}

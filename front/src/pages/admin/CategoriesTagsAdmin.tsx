@@ -6,6 +6,9 @@ import { AdminPageHead } from '../../components/layout/AdminLayout'
 import { Button, Field, Input } from '../../components/ui/form'
 import { ConfirmDialog } from '../../components/ui/overlay'
 import { useToast } from '../../hooks/useToast'
+import type { CategoryVisual } from '../../types'
+import { CategoryVisualPicker } from '../../components/admin/CategoryVisualPicker'
+import { CategoryVisualMark } from '../../components/content/CategoryVisualMark'
 
 function nbArticlesCategorie(id: string): number {
   return db.categories.find(item => item.id === id)?.articleCount ?? 0
@@ -22,8 +25,9 @@ export function CategoriesTagsAdmin() {
   const effectuer = useContentAction()
 
   const [nouvelleCat, setNouvelleCat] = useState('')
+  const [nouveauVisuel, setNouveauVisuel] = useState<CategoryVisual | null>(null)
   const [nouveauTag, setNouveauTag] = useState('')
-  const [editionCat, setEditionCat] = useState<{ id: string; nom: string } | null>(null)
+  const [editionCat, setEditionCat] = useState<{ id: string; nom: string; visual: CategoryVisual | null } | null>(null)
   const [editionTag, setEditionTag] = useState<{ id: string; nom: string } | null>(null)
   const [aSupprimerCat, setASupprimerCat] = useState<{ id: string; nom: string } | null>(null)
   const [aSupprimerTag, setASupprimerTag] = useState<{ id: string; nom: string } | null>(null)
@@ -42,14 +46,15 @@ export function CategoriesTagsAdmin() {
             Catégories
           </h2>
           <form
-            className="mt-4 flex items-end gap-3"
+            className="mt-4 grid min-w-0 gap-3"
             onSubmit={(e) => {
               e.preventDefault()
               if (!nouvelleCat.trim()) return
               void effectuer(async () => {
-                await saveClassification('categories', nouvelleCat)
-              toast('Catégorie créée.')
-              setNouvelleCat('')
+                await saveClassification('categories', nouvelleCat, undefined, nouveauVisuel)
+                toast('Catégorie créée.')
+                setNouvelleCat('')
+                setNouveauVisuel(null)
               })
             }}
           >
@@ -61,7 +66,8 @@ export function CategoriesTagsAdmin() {
                 placeholder="Exemple : Patrimoine local"
               />
             </Field>
-            <Button type="submit" className="mb-0.5">
+            <CategoryVisualPicker value={nouveauVisuel} onChange={setNouveauVisuel} />
+            <Button type="submit" className="justify-self-start">
               <Plus aria-hidden="true" className="h-5 w-5" />
               Créer
             </Button>
@@ -73,14 +79,14 @@ export function CategoriesTagsAdmin() {
                 <li key={c.id} className="rounded-xl border border-line bg-sand p-4">
                   {editionCat?.id === c.id ? (
                     <form
-                      className="flex flex-wrap items-end gap-3"
+                      className="grid min-w-0 gap-3"
                       onSubmit={(e) => {
                         e.preventDefault()
                         void effectuer(async () => {
-                await saveClassification('categories', editionCat.nom, c.id)
-                        toast('Catégorie modifiée.')
-                        setEditionCat(null)
-              })
+                          await saveClassification('categories', editionCat.nom, c.id, editionCat.visual)
+                          toast('Catégorie modifiée.')
+                          setEditionCat(null)
+                        })
                       }}
                     >
                       <Field label="Nom de la catégorie" htmlFor={`cat-${c.id}`} className="flex-1">
@@ -90,19 +96,20 @@ export function CategoriesTagsAdmin() {
                           onChange={(e) => setEditionCat({ ...editionCat, nom: e.target.value })}
                         />
                       </Field>
-                      <Button type="submit" size="petit" className="mb-0.5">Enregistrer</Button>
-                      <Button type="button" size="petit" variant="blanc" className="mb-0.5" onClick={() => setEditionCat(null)}>
-                        Annuler
-                      </Button>
+                      <CategoryVisualPicker value={editionCat.visual} onChange={visual => setEditionCat({ ...editionCat, visual })} />
+                      <div className="flex flex-wrap gap-2">
+                        <Button type="submit" size="petit">Enregistrer</Button>
+                        <Button type="button" size="petit" variant="blanc" onClick={() => setEditionCat(null)}>Annuler</Button>
+                      </div>
                     </form>
                   ) : (
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <p className="font-bold">{c.nom}</p>
+                      <p className="flex min-w-0 items-center gap-2 break-words font-bold"><CategoryVisualMark visual={c.visual} />{c.nom}</p>
                       <p className="text-[0.9375rem] text-mist">
                         {n} article{n > 1 ? 's' : ''} lié{n > 1 ? 's' : ''}
                       </p>
                       <div className="flex gap-2">
-                        <Button size="petit" variant="secondaire" onClick={() => setEditionCat({ id: c.id, nom: c.nom })}>
+                        <Button size="petit" variant="secondaire" onClick={() => setEditionCat({ id: c.id, nom: c.nom, visual: c.visual ?? null })}>
                           <Pencil aria-hidden="true" className="h-4 w-4" />
                           Modifier
                         </Button>

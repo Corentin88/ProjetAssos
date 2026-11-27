@@ -3,6 +3,8 @@ import { Plus } from 'lucide-react'
 import { ApiError, authErrorMessage } from '../../lib/auth'
 import { saveClassification } from '../../lib/content'
 import { Button, Field, Input } from '../ui/form'
+import type { CategoryVisual } from '../../types'
+import { CategoryVisualPicker } from './CategoryVisualPicker'
 
 export function QuickClassification({ kind, onCreated }: {
   kind: 'categories' | 'tags'
@@ -13,6 +15,7 @@ export function QuickClassification({ kind, onCreated }: {
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [visual, setVisual] = useState<CategoryVisual | null>(null)
   const category = kind === 'categories'
   const label = category ? 'Nouvelle catégorie' : 'Nouveau tag'
   async function create() {
@@ -21,10 +24,11 @@ export function QuickClassification({ kind, onCreated }: {
     setBusy(true)
     setError('')
     try {
-      const created = await saveClassification(kind, value)
+      const created = await saveClassification(kind, value, undefined, category ? visual : undefined)
       onCreated(created.id)
       setOpen(false)
       setName('')
+      setVisual(null)
     } catch (reason) {
       setError(reason instanceof ApiError && reason.status === 409
         ? category ? 'Cette catégorie existe déjà.' : 'Ce tag existe déjà.'
@@ -47,6 +51,10 @@ export function QuickClassification({ kind, onCreated }: {
             void create()
           }} />
       </Field>
+      {category && <details>
+        <summary className="cursor-pointer font-bold text-forest">Personnaliser le visuel</summary>
+        <CategoryVisualPicker value={visual} onChange={setVisual} disabled={busy} />
+      </details>}
       <div className="flex flex-wrap gap-2">
         <Button size="petit" disabled={busy || !name.trim()} onClick={() => void create()}>{busy ? 'Création…' : 'Créer'}</Button>
         <Button variant="blanc" size="petit" disabled={busy} onClick={() => { setOpen(false); setError('') }}>Annuler</Button>

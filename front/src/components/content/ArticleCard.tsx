@@ -1,13 +1,14 @@
 import { Link, useLocation, useMatch } from 'react-router-dom'
 import { CalendarDays, Newspaper, User } from 'lucide-react'
 import type { Article, Tag as TagType } from '../../types'
-import { articleAuthorLabel, articleCoverMediaId, getCategory, getMedia, getTag, publicBlocks } from '../../lib/selectors'
+import { articleAuthorLabel, articleCoverMediaId, articleExcerpt, getCategory, getMedia, getTag, publicBlocks } from '../../lib/selectors'
 import { formatDate } from '../../lib/format'
 import { mediaUrl } from '../../lib/assets'
 import { normaliserParametresArticles } from '../../lib/articleSearchParams'
 import { Badge } from '../ui/feedback'
 import type { BadgeVariant } from '../ui/feedback'
 import { articleCategoryLink } from './ArticleCategories'
+import { CategoryVisualMark } from './CategoryVisualMark'
 
 /** Nombre de tags affichés directement sur la carte ; au-delà, un « +N »
  *  évite de masquer la photographie (brief §2 : traitement élégant) */
@@ -24,12 +25,6 @@ export function ArticleStatutBadge({ statut }: { statut: Article['statut'] }) {
   }
   const { label, variant } = map[statut]
   return <Badge variant={variant}>{label}</Badge>
-}
-
-function extrait(article: Article): string {
-  const blocks = publicBlocks(article)
-  const p = blocks.find((b) => b.type === 'paragraphe' && b.text)
-  return p?.text?.slice(0, 220) ?? ''
 }
 
 /** Carte d'article moderne et compacte (§25) :
@@ -75,7 +70,7 @@ export function ArticleCard({ article }: { article: Article }) {
             <img
               src={mediaUrl(cover.file)}
               alt=""
-              className="carte-article-image h-full w-full object-cover"
+              className={`h-full w-full ${cover.fromPdf ? 'bg-sand object-contain' : 'carte-article-image object-cover'}`}
               loading="lazy"
             />
           ) : (
@@ -88,9 +83,10 @@ export function ArticleCard({ article }: { article: Article }) {
           {categorie ? (
             <Link
               to={articleCategoryLink(categorie.id, filtres)}
-              className="carte-article-badge absolute left-3 top-3 z-10 inline-flex min-h-8 max-w-[calc(100%-1.5rem)] items-center rounded-full bg-white px-3 text-sm font-bold text-forest shadow-sm hover:bg-leaf-pale hover:underline"
+              className="carte-article-badge absolute left-3 top-3 z-10 inline-flex min-h-8 max-w-[calc(100%-1.5rem)] items-center gap-1.5 rounded-full bg-white px-3 text-sm font-bold text-forest shadow-sm hover:bg-leaf-pale hover:underline"
               title={categorie.nom}
             >
+              <CategoryVisualMark visual={categorie.visual} size="h-4 w-4" />
               <span className="truncate">{categorie.nom}</span>
               <span className="sr-only"> — filtrer les actualités par cette catégorie</span>
             </Link>
@@ -154,7 +150,7 @@ export function ArticleCard({ article }: { article: Article }) {
             </Link>
           </h3>
           <p className="line-clamp-3 text-[0.9375rem] leading-relaxed text-bark/90">
-            {extrait(article)}
+            {articleExcerpt(publicBlocks(article))}
           </p>
           <p className="mt-auto pt-1">
             <span

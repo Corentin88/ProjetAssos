@@ -9,7 +9,6 @@ import {
   MessagesSquare,
   ScrollText,
   TriangleAlert,
-  UserPlus,
   Users,
 } from 'lucide-react'
 import { actionLabels, journalActor, journalTarget, useAdminOverview } from '../../lib/admin'
@@ -89,8 +88,8 @@ export function Dashboard() {
           Nouvel article
         </Link>
         <Link to="/admin/utilisateurs" className={buttonClasses('secondaire')}>
-          <UserPlus aria-hidden="true" className="h-5 w-5" />
-          Créer un compte
+          <Users aria-hidden="true" className="h-5 w-5" />
+          Gérer les utilisateurs
         </Link>
       </AdminPageHead>
 
@@ -170,8 +169,8 @@ export function Dashboard() {
               {[
                 { to: '/admin/articles/nouveau', label: 'Créer un article', icone: FileText },
                 { to: '/admin/articles?onglet=corbeille', label: 'Gérer la corbeille', icone: FileText },
-                { to: '/admin/medias', label: 'Importer un média', icone: ImageIcon },
-                { to: '/admin/utilisateurs', label: 'Créer un compte utilisateur', icone: UserPlus },
+                { to: '/admin/medias', label: 'Ouvrir la médiathèque', icone: ImageIcon },
+                { to: '/admin/utilisateurs', label: 'Gérer les utilisateurs', icone: Users },
                 { to: '/admin/commentaires', label: 'Modérer les commentaires', icone: MessagesSquare },
                 { to: '/admin/statistiques', label: 'Voir les statistiques', icone: ScrollText },
               ].map((a) => (

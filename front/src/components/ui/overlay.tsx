@@ -13,13 +13,14 @@ interface ModalProps {
   title: string
   children: ReactNode
   footer?: ReactNode
-  size?: 'normal' | 'large'
+  size?: 'normal' | 'large' | 'fullscreen'
   preventClose?: boolean
 }
 
 export function Modal({ open, onClose, title, children, footer, size = 'normal', preventClose = false }: ModalProps) {
   const ref = useRef<HTMLDialogElement>(null)
   const titleId = useId()
+  const fullscreen = size === 'fullscreen'
 
   useEffect(() => {
     const d = ref.current
@@ -32,6 +33,20 @@ export function Modal({ open, onClose, title, children, footer, size = 'normal',
     }
   }, [open])
 
+  useEffect(() => {
+    if (!open || !fullscreen) return
+    const root = document.documentElement
+    const body = document.body
+    const rootOverflow = root.style.overflow
+    const bodyOverflow = body.style.overflow
+    root.style.overflow = 'hidden'
+    body.style.overflow = 'hidden'
+    return () => {
+      root.style.overflow = rootOverflow
+      body.style.overflow = bodyOverflow
+    }
+  }, [open, fullscreen])
+
   return (
     <dialog
       ref={ref}
@@ -39,25 +54,27 @@ export function Modal({ open, onClose, title, children, footer, size = 'normal',
       onClose={onClose}
       onCancel={event => { if (preventClose) event.preventDefault() }}
       tabIndex={-1}
-      className={`fixed inset-0 m-auto w-[calc(100vw-2rem)] rounded-2xl border border-line bg-white p-6 shadow-2xl backdrop:bg-bark/60 ${
-        size === 'large' ? 'max-w-3xl' : 'max-w-xl'
-      } max-h-[calc(100vh-2rem)] overflow-y-auto scrollzone`}
+      className={fullscreen
+        ? 'fixed inset-0 m-0 h-dvh max-h-none w-full max-w-none flex-col overflow-hidden bg-white p-3 backdrop:bg-bark/90 open:flex sm:p-5'
+          : `fixed inset-0 m-auto w-[calc(100vw-2rem)] rounded-2xl border border-line bg-white p-4 shadow-2xl backdrop:bg-bark/60 sm:p-6 ${
+          size === 'large' ? 'max-w-3xl' : 'max-w-xl'
+        } max-h-[calc(100vh-2rem)] overflow-y-auto scrollzone`}
     >
       <div className="flex items-start justify-between gap-4">
-        <h2 id={titleId} className="text-xl font-bold">
+        <h2 id={titleId} className="min-w-0 text-xl font-bold [overflow-wrap:anywhere]">
           {title}
         </h2>
         <button
           type="button"
           disabled={preventClose}
           onClick={onClose}
-          className="rounded-lg p-2 text-mist hover:bg-sand hover:text-bark"
+          className="grid size-11 shrink-0 place-items-center rounded-lg text-mist hover:bg-sand hover:text-bark"
         >
           <X aria-hidden="true" className="h-6 w-6" />
           <span className="sr-only">Fermer la fenêtre</span>
         </button>
       </div>
-      <div className="mt-4">{children}</div>
+      <div className={fullscreen ? 'mt-2 flex min-h-0 flex-1 flex-col' : 'mt-4'}>{children}</div>
       {footer ? <div className="mt-6 flex flex-wrap justify-end gap-3">{footer}</div> : null}
     </dialog>
   )
